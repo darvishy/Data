@@ -1,0 +1,54 @@
+<resources>
+    <string name="app_name">Nexus HUD</string>
+    <string name="hud_subtitle">MULTI-SPECTRUM IDENTITY TELEMETRY CONSOLE</string>
+    <string name="developer_credit">This application was developed by Nullemperor.</string>
+    <string name="join_telegram">JOIN TELEGRAM CHANNEL</string>
+    <string name="telegram_url">http://t.me/Nullemperor</string>
+
+    <!-- Setup Screen -->
+    <string name="setup_title">INITIALIZE HUD SECURITY</string>
+    <string name="setup_subtitle">Configure master access cipher and fingerprint sensor matrix</string>
+    <string name="label_master_password">MASTER PASSWORD</string>
+    <string name="label_confirm_password">CONFIRM PASSWORD</string>
+    <string name="label_enable_biometrics">ENABLE FINGERPRINT / BIOMETRIC UNLOCK</string>
+    <string name="btn_initialize_system">ENGAGE SECURITY CORE</string>
+    <string name="err_password_short">Password must be at least 4 characters.</string>
+    <string name="err_password_mismatch">Passwords do not match.</string>
+
+    <!-- Unlock Screen -->
+    <string name="unlock_title">BIOMETRIC HUD LOCKED</string>
+    <string name="unlock_subtitle">Verify fingerprint signature or enter master access cipher</string>
+    <string name="btn_fingerprint_scan">SCAN FINGERPRINT</string>
+    <string name="btn_unlock_password">AUTHENTICATE CIPHER</string>
+    <string name="err_invalid_password">Access denied: Invalid master cipher.</string>
+    <string name="biometric_prompt_title">Nexus HUD Biometric Access</string>
+    <string name="biometric_prompt_subtitle">Scan fingerprint to unlock Multicolor HUD Console</string>
+    <string name="biometric_prompt_negative">Use Master Password</string>
+    <string name="biometric_unavailable_hint">Hardware fingerprint sensor unavailable or unconfigured on this device — use Master Password below.</string>
+
+    <!-- Main Grid -->
+    <string name="node_1">1-BankMeli</string>
+    <string name="node_2">2-BankMelat</string>
+    <string name="node_3">3BankSaderat</string>
+    <string name="node_4">4-BankTejarat</string>
+    <string name="node_5">5-BankSepah</string>
+    <string name="node_6">6-Citizen</string>
+    <string name="node_7">7-Irancell</string>
+    <string name="node_8">8-Telegram</string>
+    <string name="total_records_label">INDEXED RECORDS</string>
+    <string name="lock_hud_button">LOCK HUD</string>
+
+    <!-- Module Detail Screen -->
+    <string name="btn_import_csv">IMPORT IDENTITY CSV DATABASE</string>
+    <string name="btn_generate_benchmark">BENCHMARK STREAM</string>
+    <string name="btn_pause_import">PAUSE</string>
+    <string name="btn_resume_import">RESUME</string>
+    <string name="btn_cancel_import">ABORT</string>
+    <string name="btn_clear_node">PURGE NODE</string>
+    <string name="search_placeholder">Query name, national code, mobile, card, account, postal code, or address…</string>
+    <string name="cpu_engine_label">CPU MULTI-THREAD WORKERS</string>
+    <string name="gpu_engine_label">GPU SHADER / VECTOR ACCEL</string>
+    <string name="empty_node_title">NO IDENTITY RECORDS INDEXED</string>
+    <string name="empty_node_tip">Select IMPORT IDENTITY CSV DATABASE to stream a local CSV file with multi-threaded CPU + GPU acceleration, or run a high-speed synthetic CSV stream benchmark.</string>
+    <string name="back_to_grid">Return to HUD Grid</string>
+</resources>
