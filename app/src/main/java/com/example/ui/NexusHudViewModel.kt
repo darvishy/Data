@@ -18,6 +18,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -52,8 +54,21 @@ class NexusHudViewModel(application: Application) : AndroidViewModel(application
 
     val importState: StateFlow<ImportProgressState> = importEngine.state
 
-    val moduleCounts: StateFlow<Map<String, Long>> = identityRepository.moduleCountsFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+    /**
+     * Emits initial module counts immediately, then throttles subsequent Room invalidation
+     * updates to at most ~3x/sec during high-speed multi-million-row imports.
+     */
+    val moduleCounts: StateFlow<Map<String, Long>> = flow {
+        var isFirstEmission = true
+        identityRepository.moduleCountsFlow.conflate().collect { counts ->
+            emit(counts)
+            if (isFirstEmission) {
+                isFirstEmission = false
+            } else {
+                delay(350L)
+            }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
     private val _searchTelemetry = MutableStateFlow(SearchTelemetry())
     val searchTelemetry: StateFlow<SearchTelemetry> = _searchTelemetry.asStateFlow()
@@ -81,18 +96,33 @@ class NexusHudViewModel(application: Application) : AndroidViewModel(application
             }
         }
 
-        // Refresh module records automatically when an import completes
+        // Refresh module records cleanly on first committed batch, pause, or completion
+        // without contending with SQLite WAL writes on every intermediate batch.
         viewModelScope.launch {
+            var previewLoadedForCurrentRun = false
+            var lastStatus = ImportStatus.IDLE
             importEngine.state.collect { imp ->
+                if (imp.status == ImportStatus.RUNNING && lastStatus != ImportStatus.RUNNING && lastStatus != ImportStatus.PAUSED) {
+                    previewLoadedForCurrentRun = false
+                }
                 val currentModule = _uiState.value.selectedModule
-                if (currentModule != null &&
-                    imp.activeModuleId == currentModule.id &&
-                    (imp.status == ImportStatus.COMPLETED || imp.activeBatchIndex % 3 == 1)
-                ) {
-                    if (_searchTelemetry.value.query.isEmpty()) {
-                        refreshModuleDefaultRecords(currentModule)
+                if (currentModule != null && imp.activeModuleId == currentModule.id) {
+                    val shouldRefreshFirstBatch =
+                        imp.status == ImportStatus.RUNNING && !previewLoadedForCurrentRun && imp.processedRecords > 0L
+                    val shouldRefreshTerminalOrPaused =
+                        (imp.status == ImportStatus.COMPLETED || imp.status == ImportStatus.PAUSED) &&
+                            imp.status != lastStatus
+
+                    if (shouldRefreshFirstBatch || shouldRefreshTerminalOrPaused) {
+                        if (shouldRefreshFirstBatch) {
+                            previewLoadedForCurrentRun = true
+                        }
+                        if (_searchTelemetry.value.query.isEmpty()) {
+                            refreshModuleDefaultRecords(currentModule)
+                        }
                     }
                 }
+                lastStatus = imp.status
             }
         }
     }
@@ -184,11 +214,12 @@ class NexusHudViewModel(application: Application) : AndroidViewModel(application
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
             if (query.isNotBlank()) {
-                delay(75L)
+                delay(45L)
             }
             identityRepository.executeVisibleHighSpeedSearch(
                 moduleId = module.id,
                 rawQuery = query,
+                cachedModuleCount = moduleCounts.value[module.id],
                 onStageUpdate = { telemetry ->
                     if (_uiState.value.selectedModule == module) {
                         _searchTelemetry.value = telemetry
@@ -235,6 +266,7 @@ class NexusHudViewModel(application: Application) : AndroidViewModel(application
             identityRepository.executeVisibleHighSpeedSearch(
                 moduleId = module.id,
                 rawQuery = activeQuery,
+                cachedModuleCount = null,
                 onStageUpdate = { telemetry ->
                     if (_uiState.value.selectedModule == module) {
                         _searchTelemetry.value = telemetry

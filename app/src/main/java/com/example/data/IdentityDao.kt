@@ -31,7 +31,7 @@ interface IdentityDao {
         LIMIT :limit
         """
     )
-    suspend fun getRecentRecords(moduleId: String, limit: Int = 120): List<IdentityEntity>
+    suspend fun getRecentRecords(moduleId: String, limit: Int = 80): List<IdentityEntity>
 
     @Query(
         """
@@ -47,23 +47,8 @@ interface IdentityDao {
     suspend fun searchFtsInModule(
         moduleId: String,
         ftsQuery: String,
-        limit: Int = 200
+        limit: Int = 150
     ): List<IdentityEntity>
-
-    @Query(
-        """
-        SELECT COUNT(*) FROM identity_records
-        WHERE moduleId = :moduleId
-          AND rowid IN (
-            SELECT rowid FROM identity_records_fts
-            WHERE identity_records_fts MATCH :ftsQuery
-          )
-        """
-    )
-    suspend fun countFtsMatchesInModule(
-        moduleId: String,
-        ftsQuery: String
-    ): Long
 
     @Query(
         """
@@ -75,9 +60,7 @@ interface IdentityDao {
             OR accountOrHandle = :exactQuery
             OR cardNumber = :exactQuery
             OR username = :exactQuery
-            OR username = '@' || :exactQuery
-            OR idNumber = :exactQuery
-            OR postalCode = :exactQuery
+            OR username = :atExactQuery
           )
         LIMIT :limit
         """
@@ -85,18 +68,43 @@ interface IdentityDao {
     suspend fun searchExactIndexedInModule(
         moduleId: String,
         exactQuery: String,
-        limit: Int = 200
+        atExactQuery: String = "@$exactQuery",
+        limit: Int = 150
+    ): List<IdentityEntity>
+
+    @Query(
+        """
+        SELECT * FROM identity_records
+        WHERE moduleId = :moduleId
+          AND (
+            (nationalCode >= :prefix AND nationalCode < :prefixUpper)
+            OR (phone >= :prefix AND phone < :prefixUpper)
+            OR (accountOrHandle >= :prefix AND accountOrHandle < :prefixUpper)
+            OR (cardNumber >= :prefix AND cardNumber < :prefixUpper)
+            OR (username >= :prefix AND username < :prefixUpper)
+            OR (username >= :atPrefix AND username < :atPrefixUpper)
+          )
+        LIMIT :limit
+        """
+    )
+    suspend fun searchPrefixIndexedInModule(
+        moduleId: String,
+        prefix: String,
+        prefixUpper: String = prefix + "\uFFFF",
+        atPrefix: String = "@$prefix",
+        atPrefixUpper: String = "@$prefix\uFFFF",
+        limit: Int = 150
     ): List<IdentityEntity>
 
     @RawQuery
     suspend fun searchMultiTokenFallback(query: SupportSQLiteQuery): List<IdentityEntity>
-
-    @RawQuery
-    suspend fun countMultiTokenFallback(query: SupportSQLiteQuery): Long
 
     @Query("DELETE FROM identity_records WHERE moduleId = :moduleId")
     suspend fun clearModuleRecords(moduleId: String)
 
     @Query("INSERT INTO identity_records_fts(identity_records_fts) VALUES('rebuild')")
     suspend fun rebuildFtsIndex()
+
+    @Query("INSERT INTO identity_records_fts(identity_records_fts) VALUES('optimize')")
+    suspend fun optimizeFtsIndex()
 }

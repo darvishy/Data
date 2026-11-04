@@ -1032,5 +1032,19 @@ private fun EmptyModuleRecordsCard(
     }
 }
 
-private fun formatNum(value: Long): String =
-    NumberFormat.getNumberInstance(Locale.US).format(value)
+private fun formatNum(value: Long): String {
+    val raw = value.toString()
+    val start = if (value < 0L) 1 else 0
+    val digits = raw.length - start
+    if (digits <= 3) return raw
+    val sb = StringBuilder(raw.length + (digits - 1) / 3)
+    if (start == 1) sb.append('-')
+    for (i in start until raw.length) {
+        val posFromStart = i - start
+        if (posFromStart > 0 && (digits - posFromStart) % 3 == 0) {
+            sb.append(',')
+        }
+        sb.append(raw[i])
+    }
+    return sb.toString()
+}

@@ -167,6 +167,26 @@ class ExampleUnitTest {
             2
         )
         assertTrue(!CsvSchemaParser.passesModuleImportFilter("telegram", emptyPhoneRow))
+
+        // Verify zero-allocation raw line 98 pre-filter (including Persian digits, quotes, '+', and empty-column guard)
+        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784512963;989123456789;user;Aria;Parsa", 1, ';'))
+        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784512963;\"+989123456789\";user;Aria;Parsa", 1, ';'))
+        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784512963;۹۸۹۱۲۳۴۵۶۷۸۹;user;Aria;Parsa", 1, ';'))
+        assertTrue(!CsvSchemaParser.rawTelegramLinePasses98Filter("784512999;14155552671;foreign;John;Doe", 1, ';'))
+        assertTrue(!CsvSchemaParser.rawTelegramLinePasses98Filter("784513000;;98_username_not_phone;Sara;Rad", 1, ';'))
+    }
+
+    @Test
+    fun `verify BoundedLineReader caps runaway corrupt lines without crashing`() {
+        val hugeLine = "989123456789;" + "X".repeat(25_000) + "\n784512963;989120001122;valid_after_corrupt;Kian;Rad"
+        com.example.engine.BoundedLineReader(java.io.StringReader(hugeLine), maxLineChars = 8_192).use { reader ->
+            val first = reader.readBoundedLine()
+            val second = reader.readBoundedLine()
+            val third = reader.readBoundedLine()
+            assertEquals(8_192, first?.length)
+            assertEquals("784512963;989120001122;valid_after_corrupt;Kian;Rad", second)
+            assertEquals(null, third)
+        }
     }
 
     @Test

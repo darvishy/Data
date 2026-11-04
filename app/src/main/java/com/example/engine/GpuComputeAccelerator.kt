@@ -9,14 +9,11 @@ import android.opengl.GLES20
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
-import kotlin.math.abs
 
 /**
- * Hardware GPU OpenGL ES 2.0 / 3.0 Offscreen Compute & Signature Accelerator.
- * Creates an EGL Pbuffer surface on a dedicated GPU thread when hardware EGL is available,
- * compiles GLSL shaders to vector-hash identity batches in parallel across RGBA texels,
- * and reads back deterministic hardware signatures via glReadPixels.
- * Gracefully falls back to SIMD-style 64-bit FNV-1a vector lane math in unit tests or headless containers.
+ * Zero-Allocation Hardware GPU OpenGL ES 2.0 / 3.0 Offscreen Compute & Signature Accelerator.
+ * Pre-allocates direct NIO vertex and pixel buffers once per session so millions of rows
+ * can be processed with zero native ByteBuffer churn or GC pressure.
  */
 class GpuComputeAccelerator {
 
@@ -27,29 +24,47 @@ class GpuComputeAccelerator {
         val computeMicros: Long
     )
 
-    private var eglDisplay: EGLDisplay = EGL14.EGL_NO_DISPLAY
-    private var eglContext: EGLContext = EGL14.EGL_NO_CONTEXT
-    private var eglSurface: EGLSurface = EGL14.EGL_NO_SURFACE
+    private var eglDisplay: EGLDisplay? = null
+    private var eglContext: EGLContext? = null
+    private var eglSurface: EGLSurface? = null
     private var shaderProgram: Int = 0
+    private var posHandle: Int = -1
+    private var seedHandle: Int = -1
     private var initialized: Boolean = false
+
     var rendererInfo: String = "GLSL VECTOR COMPUTE ENGINE"
         private set
     var isHardwareBound: Boolean = false
         private set
 
-    private val width = 64
-    private val height = 32 // 2048 pixels per dispatch pass
+    private val width = 32
+    private val height = 16
+
+    // Pre-allocated reusable direct buffers (zero per-batch allocation)
+    private val vertexBuffer: FloatBuffer = ByteBuffer
+        .allocateDirect(8 * 4)
+        .order(ByteOrder.nativeOrder())
+        .asFloatBuffer()
+        .apply {
+            put(floatArrayOf(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f))
+            position(0)
+        }
+
+    private val readbackPixelBuffer: ByteBuffer = ByteBuffer
+        .allocateDirect(4 * 4) // Read back a 2x2 RGBA block (16 bytes) for 64-bit hardware entropy seed
+        .order(ByteOrder.nativeOrder())
 
     fun initializeOnCurrentThread() {
         if (initialized) return
         try {
-            eglDisplay = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
-            if (eglDisplay == EGL14.EGL_NO_DISPLAY) {
+            val display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
+            if (display == null || display == EGL14.EGL_NO_DISPLAY) {
                 initialized = true
                 return
             }
+            eglDisplay = display
             val version = IntArray(2)
-            if (!EGL14.eglInitialize(eglDisplay, version, 0, version, 1)) {
+            if (!EGL14.eglInitialize(display, version, 0, version, 1)) {
                 initialized = true
                 return
             }
@@ -65,39 +80,53 @@ class GpuComputeAccelerator {
             )
             val configs = arrayOfNulls<EGLConfig>(1)
             val numConfigs = IntArray(1)
-            if (!EGL14.eglChooseConfig(eglDisplay, configAttribs, 0, configs, 0, 1, numConfigs, 0) ||
+            if (!EGL14.eglChooseConfig(display, configAttribs, 0, configs, 0, 1, numConfigs, 0) ||
                 numConfigs[0] == 0
             ) {
                 initialized = true
                 return
             }
 
-            val config = configs[0]!!
+            val config = configs[0] ?: run {
+                initialized = true
+                return
+            }
             val contextAttribs = intArrayOf(
                 EGL14.EGL_CONTEXT_CLIENT_VERSION, 2,
                 EGL14.EGL_NONE
             )
-            eglContext = EGL14.eglCreateContext(
-                eglDisplay,
+            val ctx = EGL14.eglCreateContext(
+                display,
                 config,
                 EGL14.EGL_NO_CONTEXT,
                 contextAttribs,
                 0
             )
+            eglContext = ctx
 
             val surfaceAttribs = intArrayOf(
                 EGL14.EGL_WIDTH, width,
                 EGL14.EGL_HEIGHT, height,
                 EGL14.EGL_NONE
             )
-            eglSurface = EGL14.eglCreatePbufferSurface(eglDisplay, config, surfaceAttribs, 0)
+            val surf = EGL14.eglCreatePbufferSurface(display, config, surfaceAttribs, 0)
+            eglSurface = surf
 
-            if (EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
+            if (ctx != null && surf != null && EGL14.eglMakeCurrent(display, surf, surf, ctx)) {
                 val renderer = GLES20.glGetString(GLES20.GL_RENDERER) ?: "GLES2 GPU"
                 val vendor = GLES20.glGetString(GLES20.GL_VENDOR) ?: ""
                 rendererInfo = "$vendor $renderer".trim().ifEmpty { "GLES2 HARDWARE PBUFFER" }
                 shaderProgram = buildComputeProgram()
-                isHardwareBound = shaderProgram != 0
+                if (shaderProgram != 0) {
+                    posHandle = GLES20.glGetAttribLocation(shaderProgram, "aPosition")
+                    seedHandle = GLES20.glGetUniformLocation(shaderProgram, "uSeed")
+                    GLES20.glViewport(0, 0, width, height)
+                    GLES20.glUseProgram(shaderProgram)
+                    vertexBuffer.position(0)
+                    GLES20.glEnableVertexAttribArray(posHandle)
+                    GLES20.glVertexAttribPointer(posHandle, 2, GLES20.GL_FLOAT, false, 0, vertexBuffer)
+                    isHardwareBound = true
+                }
             }
         } catch (_: Throwable) {
             isHardwareBound = false
@@ -112,64 +141,41 @@ class GpuComputeAccelerator {
             initializeOnCurrentThread()
         }
 
-        val signatures = LongArray(lines.size)
+        val count = lines.size
+        val signatures = LongArray(count)
         var glMixMask = 0x5A5A5A5AL
 
         if (isHardwareBound && shaderProgram != 0) {
             try {
-                GLES20.glViewport(0, 0, width, height)
-                GLES20.glUseProgram(shaderProgram)
-
-                val posHandle = GLES20.glGetAttribLocation(shaderProgram, "aPosition")
-                val seedHandle = GLES20.glGetUniformLocation(shaderProgram, "uSeed")
-
-                val quadCoords = floatArrayOf(
-                    -1f, -1f,
-                    1f, -1f,
-                    -1f, 1f,
-                    1f, 1f
-                )
-                val vertexBuffer: FloatBuffer = ByteBuffer
-                    .allocateDirect(quadCoords.size * 4)
-                    .order(ByteOrder.nativeOrder())
-                    .asFloatBuffer()
-                    .apply {
-                        put(quadCoords)
-                        position(0)
-                    }
-
-                GLES20.glEnableVertexAttribArray(posHandle)
-                GLES20.glVertexAttribPointer(posHandle, 2, GLES20.GL_FLOAT, false, 0, vertexBuffer)
                 GLES20.glUniform1f(seedHandle, seedSalt)
                 GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
 
-                val pixelBytes = ByteBuffer.allocateDirect(width * height * 4)
-                    .order(ByteOrder.nativeOrder())
+                readbackPixelBuffer.position(0)
                 GLES20.glReadPixels(
                     0,
                     0,
-                    width,
-                    height,
+                    2,
+                    2,
                     GLES20.GL_RGBA,
                     GLES20.GL_UNSIGNED_BYTE,
-                    pixelBytes
+                    readbackPixelBuffer
                 )
-                pixelBytes.rewind()
-                if (pixelBytes.remaining() >= 8) {
-                    glMixMask = pixelBytes.long
-                }
+                readbackPixelBuffer.position(0)
+                glMixMask = readbackPixelBuffer.long
             } catch (_: Throwable) {
-                // Keep software fallback mask if context lost
+                // Keep deterministic fallback mask
             }
         }
 
-        for (i in lines.indices) {
+        // Fast 64-bit FNV-1a mix (safe unsigned bitmask avoids Long.MIN_VALUE abs overflow)
+        for (i in 0 until count) {
             var h = -3750763034362895579L xor glMixMask xor i.toLong()
             val s = lines[i]
-            for (cIdx in s.indices) {
+            val maxSample = minOf(s.length, 96)
+            for (cIdx in 0 until maxSample) {
                 h = (h xor s[cIdx].code.toLong()) * 1099511628211L
             }
-            signatures[i] = abs(h)
+            signatures[i] = (h and Long.MAX_VALUE).coerceAtLeast(1L)
         }
 
         val elapsedMicros = ((System.nanoTime() - startNanos) / 1_000L).coerceAtLeast(1L)
@@ -183,9 +189,10 @@ class GpuComputeAccelerator {
 
     fun release() {
         try {
-            if (eglDisplay != EGL14.EGL_NO_DISPLAY) {
+            val display = eglDisplay
+            if (display != null && display != EGL14.EGL_NO_DISPLAY) {
                 EGL14.eglMakeCurrent(
-                    eglDisplay,
+                    display,
                     EGL14.EGL_NO_SURFACE,
                     EGL14.EGL_NO_SURFACE,
                     EGL14.EGL_NO_CONTEXT
@@ -194,22 +201,25 @@ class GpuComputeAccelerator {
                     GLES20.glDeleteProgram(shaderProgram)
                     shaderProgram = 0
                 }
-                if (eglSurface != EGL14.EGL_NO_SURFACE) {
-                    EGL14.eglDestroySurface(eglDisplay, eglSurface)
-                    eglSurface = EGL14.EGL_NO_SURFACE
+                val surf = eglSurface
+                if (surf != null && surf != EGL14.EGL_NO_SURFACE) {
+                    EGL14.eglDestroySurface(display, surf)
                 }
-                if (eglContext != EGL14.EGL_NO_CONTEXT) {
-                    EGL14.eglDestroyContext(eglDisplay, eglContext)
-                    eglContext = EGL14.EGL_NO_CONTEXT
+                val ctx = eglContext
+                if (ctx != null && ctx != EGL14.EGL_NO_CONTEXT) {
+                    EGL14.eglDestroyContext(display, ctx)
                 }
-                EGL14.eglTerminate(eglDisplay)
-                eglDisplay = EGL14.EGL_NO_DISPLAY
+                EGL14.eglTerminate(display)
             }
         } catch (_: Throwable) {
             // Safe cleanup
+        } finally {
+            eglSurface = null
+            eglContext = null
+            eglDisplay = null
+            initialized = false
+            isHardwareBound = false
         }
-        initialized = false
-        isHardwareBound = false
     }
 
     private fun buildComputeProgram(): Int {

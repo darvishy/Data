@@ -19,12 +19,12 @@ Once the GitHub Actions build and release workflow finishes, the newest `app-deb
 
 ## ⚙️ How to Use the GitHub Actions APK Pipeline
 
-This repository includes an automated CI/CD workflow at `.github/workflows/build-apk.yml` configured with **Temurin Java 17**, **Gradle 9.3.1**, and **Android Gradle Plugin (AGP) 9.1.1**.
+This repository includes an automated CI/CD workflow at `.github/workflows/build-apk.yml` configured with **Temurin Java 21**, **Gradle 9.3.1**, and **Android Gradle Plugin (AGP) 9.1.1**.
 
 ### 1. Automatic Builds on Push
 Every time you push or sync changes to the **`main`** branch (for example, from Google AI Studio or via `git push origin main`), GitHub Actions automatically:
-1. Sets up Java 17 and Gradle 9.3.1.
-2. Generates a temporary debug keystore inside the runner if needed.
+1. Sets up Java 21, Android SDK licenses, and Gradle 9.3.1.
+2. Restores the persistent debug keystore from `debug.keystore.base64` so APK updates install cleanly over previous builds.
 3. Builds and verifies `app/build/outputs/apk/debug/app-debug.apk`.
 4. Uploads a backup workflow artifact named **`app-debug-apk`**.
 5. Publishes a uniquely tagged GitHub Release (`debug-apk-build-<run_number>-<attempt>`) marked as **Latest** containing `app-debug.apk`.

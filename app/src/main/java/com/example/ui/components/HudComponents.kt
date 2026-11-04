@@ -37,12 +37,15 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
@@ -61,6 +64,8 @@ import com.example.ui.theme.HudSurfaceCard
 import com.example.ui.theme.HudTeal
 import com.example.ui.theme.HudViolet
 
+private val SharedChamferShape = CutCornerShape(topStart = 14.dp, bottomEnd = 14.dp)
+
 @Composable
 fun MulticolorHudBackdrop(
     modifier: Modifier = Modifier,
@@ -73,7 +78,7 @@ fun MulticolorHudBackdrop(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 6500, easing = LinearEasing),
+            animation = tween(durationMillis = 7500, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "scanLine"
@@ -83,59 +88,42 @@ fun MulticolorHudBackdrop(
         modifier = modifier
             .fillMaxSize()
             .background(HudBackgroundDeep)
-    ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val w = size.width
-            val h = size.height
+            .drawWithCache {
+                val w = size.width
+                val h = size.height
+                val primaryGlowCenter = Offset(w * 0.15f, h * 0.12f)
+                val secondaryGlowCenter = Offset(w * 0.88f, h * 0.78f)
+                val glowRadius = (w * 0.65f).coerceAtLeast(1f)
 
-            // Subtle radial neon glows
-            drawCircle(
-                brush = Brush.radialGradient(
+                val primaryGlowBrush = Brush.radialGradient(
                     colors = listOf(accentPrimary.copy(alpha = 0.14f), Color.Transparent),
-                    center = Offset(w * 0.15f, h * 0.12f),
-                    radius = w * 0.65f
-                ),
-                radius = w * 0.65f,
-                center = Offset(w * 0.15f, h * 0.12f)
-            )
-            drawCircle(
-                brush = Brush.radialGradient(
+                    center = primaryGlowCenter,
+                    radius = glowRadius
+                )
+                val secondaryGlowBrush = Brush.radialGradient(
                     colors = listOf(accentSecondary.copy(alpha = 0.12f), Color.Transparent),
-                    center = Offset(w * 0.88f, h * 0.78f),
-                    radius = w * 0.65f
-                ),
-                radius = w * 0.65f,
-                center = Offset(w * 0.88f, h * 0.78f)
-            )
-
-            // HUD Coordinate Grid
-            val gridStep = 44.dp.toPx()
-            val gridColor = accentPrimary.copy(alpha = 0.045f)
-            var x = 0f
-            while (x <= w) {
-                drawLine(
-                    color = gridColor,
-                    start = Offset(x, 0f),
-                    end = Offset(x, h),
-                    strokeWidth = 1f
+                    center = secondaryGlowCenter,
+                    radius = glowRadius
                 )
-                x += gridStep
-            }
-            var y = 0f
-            while (y <= h) {
-                drawLine(
-                    color = gridColor,
-                    start = Offset(0f, y),
-                    end = Offset(w, y),
-                    strokeWidth = 1f
-                )
-                y += gridStep
-            }
 
-            // Moving multicolor laser scanline
-            val scanY = h * scanProgress
-            drawLine(
-                brush = Brush.horizontalGradient(
+                val gridStep = 44.dp.toPx()
+                val gridColor = accentPrimary.copy(alpha = 0.045f)
+                val gridPath = Path().apply {
+                    var x = 0f
+                    while (x <= w) {
+                        moveTo(x, 0f)
+                        lineTo(x, h)
+                        x += gridStep
+                    }
+                    var y = 0f
+                    while (y <= h) {
+                        moveTo(0f, y)
+                        lineTo(w, y)
+                        y += gridStep
+                    }
+                }
+
+                val scanBrush = Brush.horizontalGradient(
                     colors = listOf(
                         Color.Transparent,
                         HudCyan.copy(alpha = 0.35f),
@@ -143,12 +131,35 @@ fun MulticolorHudBackdrop(
                         HudLime.copy(alpha = 0.35f),
                         Color.Transparent
                     )
-                ),
-                start = Offset(0f, scanY),
-                end = Offset(w, scanY),
-                strokeWidth = 2.dp.toPx()
-            )
-        }
+                )
+                val scanStroke = 2.dp.toPx()
+
+                onDrawBehind {
+                    drawCircle(
+                        brush = primaryGlowBrush,
+                        radius = glowRadius,
+                        center = primaryGlowCenter
+                    )
+                    drawCircle(
+                        brush = secondaryGlowBrush,
+                        radius = glowRadius,
+                        center = secondaryGlowCenter
+                    )
+                    drawPath(
+                        path = gridPath,
+                        color = gridColor,
+                        style = Stroke(width = 1f)
+                    )
+                    val scanY = h * scanProgress
+                    drawLine(
+                        brush = scanBrush,
+                        start = Offset(0f, scanY),
+                        end = Offset(w, scanY),
+                        strokeWidth = scanStroke
+                    )
+                }
+            }
+    ) {
         content()
     }
 }
@@ -162,20 +173,21 @@ fun HudChamferedPanel(
     contentPadding: PaddingValues = PaddingValues(16.dp),
     content: @Composable () -> Unit
 ) {
-    val shape = CutCornerShape(topStart = 14.dp, bottomEnd = 14.dp)
-    val borderBrush = Brush.linearGradient(
-        colors = listOf(
-            primaryAccent.copy(alpha = 0.85f),
-            secondaryAccent.copy(alpha = 0.55f),
-            primaryAccent.copy(alpha = 0.35f)
+    val borderBrush = remember(primaryAccent, secondaryAccent) {
+        Brush.linearGradient(
+            colors = listOf(
+                primaryAccent.copy(alpha = 0.85f),
+                secondaryAccent.copy(alpha = 0.55f),
+                primaryAccent.copy(alpha = 0.35f)
+            )
         )
-    )
+    }
 
     Box(
         modifier = modifier
-            .clip(shape)
+            .clip(SharedChamferShape)
             .background(containerColor)
-            .border(width = 1.2.dp, brush = borderBrush, shape = shape)
+            .border(width = 1.2.dp, brush = borderBrush, shape = SharedChamferShape)
             .padding(contentPadding)
     ) {
         content()
