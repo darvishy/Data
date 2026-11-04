@@ -202,4 +202,40 @@ class ExampleUnitTest {
         assertTrue(result.signatures[1] > 0L)
         accelerator.release()
     }
+
+    @Test
+    fun `verify record detail card fields and formatted copy share text`() {
+        val record = com.example.data.IdentityEntity(
+            id = 77L,
+            moduleId = "bank_melat",
+            fullName = "علی رضایی",
+            nationalCode = "0019283746",
+            phone = "09121112233",
+            accountOrHandle = "4400112233",
+            cardNumber = "6104337812345678",
+            fatherName = "داریوش",
+            birthDate = "1368/04/15",
+            city = "تهران",
+            province = "تهران",
+            address = "خیابان ولیعصر، پلاک ۴۲",
+            gpuSignatureHash = 0xABCDEFL,
+            importedAt = 1000L
+        )
+
+        val fields = com.example.ui.components.buildRecordDetailFields(record, HudModule.BANK_MELAT)
+        val fatherField = fields.first { it.label == "FATHER NAME" }
+        assertTrue(fatherField.rightAlignValue)
+        assertEquals("داریوش", fatherField.value)
+
+        val formatted = com.example.ui.components.formatRecordInformationText(record, HudModule.BANK_MELAT, fields)
+        assertTrue(formatted.contains("[BankMelat]"))
+        assertTrue(formatted.contains("NAME: علی رضایی"))
+        assertTrue(formatted.contains("NATIONAL CODE: 0019283746"))
+        assertTrue(formatted.contains("MOBILE: 09121112233"))
+        assertTrue(formatted.contains("CARD NUMBER: 6104337812345678"))
+        assertTrue(formatted.contains("ADDRESS: خیابان ولیعصر، پلاک ۴۲"))
+        // Placeholder "-" values should never pollute copied/shared text
+        assertTrue(!formatted.contains(": -"))
+    }
 }
+

@@ -50,4 +50,14 @@
     <string name="empty_node_title">NO IDENTITY RECORDS INDEXED</string>
     <string name="empty_node_tip">Select IMPORT IDENTITY CSV DATABASE to stream a local CSV file with multi-threaded CPU + GPU acceleration, or run a high-speed synthetic CSV stream benchmark.</string>
     <string name="back_to_grid">Return to HUD Grid</string>
+    <string name="record_card_tap_hint">OPEN CARD</string>
+    <string name="detail_card_header_label">IDENTITY INFORMATION CARD</string>
+    <string name="btn_copy_information">COPY INFO</string>
+    <string name="btn_copied_information">COPIED</string>
+    <string name="btn_share_information">SHARE INFO</string>
+    <string name="btn_close_card">Close information card</string>
+    <string name="btn_copy_field">Copy field value</string>
+    <string name="msg_info_copied_clipboard">INFORMATION COPIED TO CLIPBOARD</string>
+    <string name="msg_field_copied_prefix">COPIED:</string>
+    <string name="share_chooser_title">Share Identity Information</string>
 </resources>

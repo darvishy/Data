@@ -33,7 +33,6 @@ import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Stop
@@ -45,17 +44,16 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -71,6 +69,8 @@ import com.example.engine.ImportStatus
 import com.example.model.HudModule
 import com.example.ui.components.DeveloperAttributionCard
 import com.example.ui.components.HudChamferedPanel
+import com.example.ui.components.IdentityRecordDetailCardDialog
+import com.example.ui.components.IdentityRecordHudRow
 import com.example.ui.components.MulticolorHudBackdrop
 import com.example.ui.components.MulticolorSpectrumBar
 import com.example.ui.theme.HudAmber
@@ -79,10 +79,7 @@ import com.example.ui.theme.HudCyan
 import com.example.ui.theme.HudError
 import com.example.ui.theme.HudLime
 import com.example.ui.theme.HudMagenta
-import com.example.ui.theme.HudSurfaceCard
 import com.example.ui.theme.HudTextSecondary
-import java.text.NumberFormat
-import java.util.Locale
 
 @Composable
 fun ModuleDetailScreen(
@@ -100,6 +97,8 @@ fun ModuleDetailScreen(
     onSearchQueryChange: (String) -> Unit
 ) {
     BackHandler(onBack = onBack)
+
+    var selectedRecord by remember(module.id) { mutableStateOf<IdentityEntity?>(null) }
 
     val csvPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -235,7 +234,10 @@ fun ModuleDetailScreen(
                     IdentityRecordHudRow(
                         record = record,
                         module = module,
-                        accentColor = module.primaryColor
+                        accentColor = module.primaryColor,
+                        onClick = { clickedRecord ->
+                            selectedRecord = clickedRecord
+                        }
                     )
                 }
             }
@@ -246,6 +248,14 @@ fun ModuleDetailScreen(
                 DeveloperAttributionCard()
                 Spacer(modifier = Modifier.height(12.dp))
             }
+        }
+
+        selectedRecord?.let { activeRecord ->
+            IdentityRecordDetailCardDialog(
+                record = activeRecord,
+                module = module,
+                onDismiss = { selectedRecord = null }
+            )
         }
     }
 }
@@ -733,261 +743,7 @@ private fun VisibleSearchPipelinePanel(
     }
 }
 
-@Composable
-private fun IdentityRecordHudRow(
-    record: IdentityEntity,
-    module: HudModule,
-    accentColor: Color
-) {
-    val shape = CutCornerShape(topStart = 10.dp, bottomEnd = 10.dp)
-    Surface(
-        shape = shape,
-        color = HudSurfaceCard.copy(alpha = 0.88f),
-        border = BorderStroke(1.dp, accentColor.copy(alpha = 0.42f)),
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("identity_record_card")
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Person,
-                        contentDescription = "Identity Record",
-                        tint = accentColor,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = record.fullName,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
 
-                Text(
-                    text = "GPU#${record.gpuSignatureHash.toString(16).uppercase().takeLast(6)}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = HudMagenta
-                )
-            }
-
-            when {
-                module == HudModule.BANK_MELI -> {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        RecordFieldChip(label = "NAT_CODE", value = record.nationalCode, color = HudCyan, modifier = Modifier.weight(1f))
-                        RecordFieldChip(label = "MOBILE", value = record.phone, color = HudLime, modifier = Modifier.weight(1f))
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        RecordFieldChip(label = "CARD_NO", value = record.cardNumber, color = HudMagenta, modifier = Modifier.weight(1.2f))
-                        RecordFieldChip(label = "BIRTH_DATE", value = record.birthDate, color = HudAmber, modifier = Modifier.weight(0.8f))
-                    }
-                }
-
-                module == HudModule.BANK_SADERAT || record.branchId != "-" || record.memberCode != "-" -> {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        RecordFieldChip(label = "ACC_NO", value = record.accountOrHandle, color = HudCyan, modifier = Modifier.weight(1f))
-                        RecordFieldChip(label = "DEF_NO", value = record.idNumber, color = HudAmber, modifier = Modifier.weight(1f))
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        RecordFieldChip(label = "CARD_NO", value = record.cardNumber, color = HudMagenta, modifier = Modifier.weight(1.1f))
-                        RecordFieldChip(label = "PHONE", value = record.phone, color = HudLime, modifier = Modifier.weight(0.9f))
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        RecordFieldChip(label = "USER", value = record.username, color = accentColor, modifier = Modifier.weight(1f))
-                        RecordFieldChip(label = "EMAIL", value = record.email, color = HudCyan, modifier = Modifier.weight(1f))
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        RecordFieldChip(label = "MEMBER", value = record.memberCode, color = HudLime, modifier = Modifier.weight(1f))
-                        RecordFieldChip(label = "DEF_OLD", value = record.defNumOld, color = HudAmber, modifier = Modifier.weight(1f))
-                        RecordFieldChip(label = "BRANCH", value = record.branchId, color = HudMagenta, modifier = Modifier.weight(0.9f))
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        RecordFieldChip(label = "PASSW", value = record.passwValue, color = HudAmber, modifier = Modifier.weight(1f))
-                        RecordFieldChip(label = "HINT", value = record.passwordHint, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
-                    }
-                }
-
-                module == HudModule.BANK_MELAT || record.fatherName != "-" -> {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        RecordFieldChip(label = "NAT_CODE", value = record.nationalCode, color = HudCyan, modifier = Modifier.weight(1f))
-                        RecordFieldChip(label = "MOBILE", value = record.phone, color = HudLime, modifier = Modifier.weight(1f))
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        RecordFieldChip(label = "ACC_NO", value = record.accountOrHandle, color = HudAmber, modifier = Modifier.weight(1f))
-                        RecordFieldChip(label = "CARD_NO", value = record.cardNumber, color = HudMagenta, modifier = Modifier.weight(1f))
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        RecordFieldChip(label = "FATHER", value = record.fatherName, color = accentColor, modifier = Modifier.weight(1f))
-                        RecordFieldChip(label = "ID_NO", value = record.idNumber, color = HudCyan, modifier = Modifier.weight(0.9f))
-                        RecordFieldChip(label = "DOB", value = record.birthDate, color = HudLime, modifier = Modifier.weight(1f))
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        val locText = if (record.province != "-") "${record.city} / ${record.province}" else record.city
-                        val birthLocText = if (record.birthProvince != "-") "${record.birthCity} / ${record.birthProvince}" else record.birthCity
-                        RecordFieldChip(label = "CITY/PROV", value = locText, color = HudCyan, modifier = Modifier.weight(1f))
-                        RecordFieldChip(label = "BIRTH_LOC", value = birthLocText, color = HudAmber, modifier = Modifier.weight(1f))
-                    }
-                    if (record.address != "-") {
-                        RecordFieldChip(
-                            label = "ADDRESS",
-                            value = record.address,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                }
-
-                module == HudModule.CITIZEN || record.postalCode != "-" -> {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        RecordFieldChip(label = "NAT_ID", value = record.nationalCode, color = HudCyan, modifier = Modifier.weight(1f))
-                        RecordFieldChip(label = "PHONE", value = record.phone, color = HudLime, modifier = Modifier.weight(1f))
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        RecordFieldChip(label = "BIRTHDAY", value = record.birthDate, color = HudAmber, modifier = Modifier.weight(1f))
-                        RecordFieldChip(label = "POSTAL", value = record.postalCode, color = HudMagenta, modifier = Modifier.weight(1f))
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        RecordFieldChip(label = "CITY", value = record.city, color = accentColor, modifier = Modifier.weight(1f))
-                    }
-                    if (record.address != "-") {
-                        RecordFieldChip(
-                            label = "ADDRESS",
-                            value = record.address,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                }
-
-                module == HudModule.TELEGRAM -> {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        RecordFieldChip(label = "ACCOUNT_ID", value = record.accountOrHandle, color = HudCyan, modifier = Modifier.weight(1f))
-                        RecordFieldChip(label = "PHONE", value = record.phone, color = HudLime, modifier = Modifier.weight(1f))
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        RecordFieldChip(label = "USERNAME", value = record.username, color = accentColor, modifier = Modifier.weight(1f))
-                    }
-                }
-
-                else -> {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        RecordFieldChip(label = "ID", value = record.nationalCode, color = HudCyan, modifier = Modifier.weight(1f))
-                        RecordFieldChip(label = "TEL", value = record.phone, color = HudLime, modifier = Modifier.weight(1f))
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        RecordFieldChip(label = "ACC", value = record.accountOrHandle, color = HudAmber, modifier = Modifier.weight(1f))
-                        RecordFieldChip(label = "LOC", value = record.city, color = accentColor, modifier = Modifier.weight(1f))
-                    }
-                }
-            }
-
-            if (record.rawDetails.isNotBlank()) {
-                Text(
-                    text = record.rawDetails,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = HudTextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun RecordFieldChip(
-    label: String,
-    value: String,
-    color: Color,
-    modifier: Modifier = Modifier
-) {
-    Row(
-        modifier = modifier,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = "$label: ",
-            style = MaterialTheme.typography.labelSmall,
-            color = HudTextSecondary
-        )
-        Text(
-            text = value,
-            style = MaterialTheme.typography.bodySmall,
-            color = color,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
 
 @Composable
 private fun EmptyModuleRecordsCard(

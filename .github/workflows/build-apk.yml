@@ -152,6 +152,7 @@ jobs:
           - **Commit SHA:** \`${GITHUB_SHA}\`
 
           #### Included Optimizations & Fixes
+          - Right-aligned Names on result information cards and interactive tap-to-open Information Card with Share & Copy support
           - Crash-proof bounded CSV reader & zero-allocation \`98\` phone prefix pre-filter for large Telegram databases
           - Pre-compiled CSV header mapping, 2,500-row SQLite WAL batching, and reusable native OpenGL ES buffers
           - Sub-millisecond 3-tier B-Tree + FTS4 search pipeline & cached HUD backdrop rendering
