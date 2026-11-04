@@ -26,15 +26,13 @@
     <string name="biometric_prompt_negative">Use Master Password</string>
     <string name="biometric_unavailable_hint">Hardware fingerprint sensor unavailable or unconfigured on this device — use Master Password below.</string>
 
-    <!-- Main Grid -->
-    <string name="node_1">1-BankMeli</string>
-    <string name="node_2">2-BankMelat</string>
-    <string name="node_3">3BankSaderat</string>
-    <string name="node_4">4-BankTejarat</string>
-    <string name="node_5">5-BankSepah</string>
-    <string name="node_6">6-Citizen</string>
-    <string name="node_7">7-Irancell</string>
-    <string name="node_8">8-Telegram</string>
+    <!-- Main Grid (Clean Database Names without Numbers) -->
+    <string name="node_bank_meli">BankMeli</string>
+    <string name="node_bank_melat">BankMelat</string>
+    <string name="node_bank_saderat">BankSaderat</string>
+    <string name="node_citizen">Citizen</string>
+    <string name="node_irancell">Irancell</string>
+    <string name="node_telegram">Telegram</string>
     <string name="total_records_label">INDEXED RECORDS</string>
     <string name="lock_hud_button">LOCK HUD</string>
 
@@ -45,7 +43,8 @@
     <string name="btn_resume_import">RESUME</string>
     <string name="btn_cancel_import">ABORT</string>
     <string name="btn_clear_node">PURGE NODE</string>
-    <string name="search_placeholder">Query name, national code, mobile, card, account, postal code, or address…</string>
+    <string name="btn_execute_search">SEARCH</string>
+    <string name="search_placeholder">Search name, national ID, mobile, card, account, username, or address…</string>
     <string name="cpu_engine_label">CPU MULTI-THREAD WORKERS</string>
     <string name="gpu_engine_label">GPU SHADER / VECTOR ACCEL</string>
     <string name="empty_node_title">NO IDENTITY RECORDS INDEXED</string>

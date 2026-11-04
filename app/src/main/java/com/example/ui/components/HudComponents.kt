@@ -205,7 +205,8 @@ fun MulticolorSpectrumBar(modifier: Modifier = Modifier) {
 
 @Composable
 fun DeveloperAttributionCard(
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    showTelegramJoinButton: Boolean = false
 ) {
     val context = LocalContext.current
     val telegramUrl = stringResource(R.string.telegram_url)
@@ -255,38 +256,40 @@ fun DeveloperAttributionCard(
                 modifier = Modifier.testTag("developer_credit_text")
             )
 
-            Button(
-                onClick = {
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(telegramUrl)).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    try {
-                        context.startActivity(intent)
-                    } catch (_: Exception) {
-                        // Safe no-op if no browser installed in minimal container
-                    }
-                },
-                shape = CutCornerShape(topStart = 10.dp, bottomEnd = 10.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = HudTeal,
-                    contentColor = HudBackgroundDeep
-                ),
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .testTag("join_telegram_button")
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.Send,
-                    contentDescription = stringResource(R.string.join_telegram),
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = stringResource(R.string.join_telegram),
-                    style = MaterialTheme.typography.labelLarge
-                )
+            if (showTelegramJoinButton) {
+                Button(
+                    onClick = {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(telegramUrl)).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        try {
+                            context.startActivity(intent)
+                        } catch (_: Exception) {
+                            // Safe no-op if no browser installed in minimal container
+                        }
+                    },
+                    shape = CutCornerShape(topStart = 10.dp, bottomEnd = 10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HudTeal,
+                        contentColor = HudBackgroundDeep
+                    ),
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("join_telegram_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Send,
+                        contentDescription = stringResource(R.string.join_telegram),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = stringResource(R.string.join_telegram),
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
             }
         }
     }

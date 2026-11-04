@@ -259,7 +259,7 @@ fun FirstLaunchSetupScreen(
                     }
                 }
 
-                DeveloperAttributionCard()
+                DeveloperAttributionCard(showTelegramJoinButton = true)
             }
         }
     }

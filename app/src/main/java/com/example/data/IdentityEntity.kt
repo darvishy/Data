@@ -13,7 +13,8 @@ import androidx.room.PrimaryKey
         Index(value = ["moduleId", "nationalCode"]),
         Index(value = ["moduleId", "phone"]),
         Index(value = ["moduleId", "accountOrHandle"]),
-        Index(value = ["moduleId", "cardNumber"])
+        Index(value = ["moduleId", "cardNumber"]),
+        Index(value = ["moduleId", "username"])
     ]
 )
 data class IdentityEntity(
@@ -35,6 +36,13 @@ data class IdentityEntity(
     val birthProvince: String = "-",
     val postalCode: String = "-",
     val address: String = "-",
+    val email: String = "-",
+    val username: String = "-",
+    val memberCode: String = "-",
+    val branchId: String = "-",
+    val defNumOld: String = "-",
+    val passwordHint: String = "-",
+    val passwValue: String = "-",
     val rawDetails: String = "",
     val gpuSignatureHash: Long,
     val importedAt: Long
@@ -58,6 +66,13 @@ data class IdentityFtsEntity(
     val birthProvince: String,
     val postalCode: String,
     val address: String,
+    val email: String,
+    val username: String,
+    val memberCode: String,
+    val branchId: String,
+    val defNumOld: String,
+    val passwordHint: String,
+    val passwValue: String,
     val rawDetails: String
 )
 

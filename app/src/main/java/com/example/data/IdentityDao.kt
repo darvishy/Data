@@ -4,6 +4,8 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.RawQuery
+import androidx.sqlite.db.SupportSQLiteQuery
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -33,10 +35,12 @@ interface IdentityDao {
 
     @Query(
         """
-        SELECT identity_records.* FROM identity_records
-        JOIN identity_records_fts ON identity_records.rowid = identity_records_fts.rowid
-        WHERE identity_records.moduleId = :moduleId
-          AND identity_records_fts MATCH :ftsQuery
+        SELECT * FROM identity_records
+        WHERE moduleId = :moduleId
+          AND rowid IN (
+            SELECT rowid FROM identity_records_fts
+            WHERE identity_records_fts MATCH :ftsQuery
+          )
         LIMIT :limit
         """
     )
@@ -49,9 +53,11 @@ interface IdentityDao {
     @Query(
         """
         SELECT COUNT(*) FROM identity_records
-        JOIN identity_records_fts ON identity_records.rowid = identity_records_fts.rowid
-        WHERE identity_records.moduleId = :moduleId
-          AND identity_records_fts MATCH :ftsQuery
+        WHERE moduleId = :moduleId
+          AND rowid IN (
+            SELECT rowid FROM identity_records_fts
+            WHERE identity_records_fts MATCH :ftsQuery
+          )
         """
     )
     suspend fun countFtsMatchesInModule(
@@ -64,24 +70,29 @@ interface IdentityDao {
         SELECT * FROM identity_records
         WHERE moduleId = :moduleId
           AND (
-            nationalCode LIKE '%' || :rawQuery || '%'
-            OR phone LIKE '%' || :rawQuery || '%'
-            OR fullName LIKE '%' || :rawQuery || '%'
-            OR accountOrHandle LIKE '%' || :rawQuery || '%'
-            OR cardNumber LIKE '%' || :rawQuery || '%'
-            OR postalCode LIKE '%' || :rawQuery || '%'
-            OR address LIKE '%' || :rawQuery || '%'
-            OR fatherName LIKE '%' || :rawQuery || '%'
-            OR idNumber LIKE '%' || :rawQuery || '%'
+            nationalCode = :exactQuery
+            OR phone = :exactQuery
+            OR accountOrHandle = :exactQuery
+            OR cardNumber = :exactQuery
+            OR username = :exactQuery
+            OR username = '@' || :exactQuery
+            OR idNumber = :exactQuery
+            OR postalCode = :exactQuery
           )
         LIMIT :limit
         """
     )
-    suspend fun searchSubstringFallback(
+    suspend fun searchExactIndexedInModule(
         moduleId: String,
-        rawQuery: String,
+        exactQuery: String,
         limit: Int = 200
     ): List<IdentityEntity>
+
+    @RawQuery
+    suspend fun searchMultiTokenFallback(query: SupportSQLiteQuery): List<IdentityEntity>
+
+    @RawQuery
+    suspend fun countMultiTokenFallback(query: SupportSQLiteQuery): Long
 
     @Query("DELETE FROM identity_records WHERE moduleId = :moduleId")
     suspend fun clearModuleRecords(moduleId: String)

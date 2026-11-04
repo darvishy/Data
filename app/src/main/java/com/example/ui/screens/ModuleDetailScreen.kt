@@ -48,6 +48,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -566,6 +570,11 @@ private fun VisibleSearchPipelinePanel(
     searchTelemetry: SearchTelemetry,
     onSearchQueryChange: (String) -> Unit
 ) {
+    val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    var localQuery by androidx.compose.runtime.saveable.rememberSaveable(module.id) {
+        androidx.compose.runtime.mutableStateOf(searchTelemetry.query)
+    }
+
     HudChamferedPanel(
         modifier = Modifier.fillMaxWidth(),
         primaryAccent = HudCyan,
@@ -575,42 +584,86 @@ private fun VisibleSearchPipelinePanel(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            OutlinedTextField(
-                value = searchTelemetry.query,
-                onValueChange = onSearchQueryChange,
-                placeholder = {
-                    Text(
-                        text = stringResource(R.string.search_placeholder),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Filled.Search,
-                        contentDescription = "Search Records",
-                        tint = module.primaryColor
-                    )
-                },
-                trailingIcon = {
-                    if (searchTelemetry.query.isNotEmpty()) {
-                        IconButton(
-                            onClick = { onSearchQueryChange("") },
-                            modifier = Modifier.testTag("clear_search_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Clear,
-                                contentDescription = "Clear Search Query",
-                                tint = HudTextSecondary
-                            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = localQuery,
+                    onValueChange = { updated ->
+                        localQuery = updated
+                        onSearchQueryChange(updated)
+                    },
+                    placeholder = {
+                        Text(
+                            text = stringResource(R.string.search_placeholder),
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Filled.Search,
+                            contentDescription = "Search Records",
+                            tint = module.primaryColor
+                        )
+                    },
+                    trailingIcon = {
+                        if (localQuery.isNotEmpty()) {
+                            IconButton(
+                                onClick = {
+                                    localQuery = ""
+                                    onSearchQueryChange("")
+                                },
+                                modifier = Modifier.testTag("clear_search_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Clear,
+                                    contentDescription = "Clear Search Query",
+                                    tint = HudTextSecondary
+                                )
+                            }
                         }
-                    }
-                },
-                singleLine = true,
-                colors = hudTextFieldColors(module.primaryColor),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("identity_search_input")
-            )
+                    },
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Search
+                    ),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                        onSearch = {
+                            onSearchQueryChange(localQuery)
+                            keyboardController?.hide()
+                        }
+                    ),
+                    singleLine = true,
+                    colors = hudTextFieldColors(module.primaryColor),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("identity_search_input")
+                )
+
+                Button(
+                    onClick = {
+                        onSearchQueryChange(localQuery)
+                        keyboardController?.hide()
+                    },
+                    shape = CutCornerShape(topStart = 10.dp, bottomEnd = 10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = module.primaryColor,
+                        contentColor = HudBackgroundDeep
+                    ),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 14.dp),
+                    modifier = Modifier
+                        .height(56.dp)
+                        .testTag("execute_search_button")
+                ) {
+                    Text(
+                        text = stringResource(R.string.btn_execute_search),
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+            }
 
             // Visible Search Execution Pipeline Bar & Stage Indicators
             Column(
@@ -734,7 +787,63 @@ private fun IdentityRecordHudRow(
             }
 
             when {
-                module == HudModule.BANK_MELAT || record.cardNumber != "-" || record.fatherName != "-" -> {
+                module == HudModule.BANK_MELI -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        RecordFieldChip(label = "NAT_CODE", value = record.nationalCode, color = HudCyan, modifier = Modifier.weight(1f))
+                        RecordFieldChip(label = "MOBILE", value = record.phone, color = HudLime, modifier = Modifier.weight(1f))
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        RecordFieldChip(label = "CARD_NO", value = record.cardNumber, color = HudMagenta, modifier = Modifier.weight(1.2f))
+                        RecordFieldChip(label = "BIRTH_DATE", value = record.birthDate, color = HudAmber, modifier = Modifier.weight(0.8f))
+                    }
+                }
+
+                module == HudModule.BANK_SADERAT || record.branchId != "-" || record.memberCode != "-" -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        RecordFieldChip(label = "ACC_NO", value = record.accountOrHandle, color = HudCyan, modifier = Modifier.weight(1f))
+                        RecordFieldChip(label = "DEF_NO", value = record.idNumber, color = HudAmber, modifier = Modifier.weight(1f))
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        RecordFieldChip(label = "CARD_NO", value = record.cardNumber, color = HudMagenta, modifier = Modifier.weight(1.1f))
+                        RecordFieldChip(label = "PHONE", value = record.phone, color = HudLime, modifier = Modifier.weight(0.9f))
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        RecordFieldChip(label = "USER", value = record.username, color = accentColor, modifier = Modifier.weight(1f))
+                        RecordFieldChip(label = "EMAIL", value = record.email, color = HudCyan, modifier = Modifier.weight(1f))
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        RecordFieldChip(label = "MEMBER", value = record.memberCode, color = HudLime, modifier = Modifier.weight(1f))
+                        RecordFieldChip(label = "DEF_OLD", value = record.defNumOld, color = HudAmber, modifier = Modifier.weight(1f))
+                        RecordFieldChip(label = "BRANCH", value = record.branchId, color = HudMagenta, modifier = Modifier.weight(0.9f))
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        RecordFieldChip(label = "PASSW", value = record.passwValue, color = HudAmber, modifier = Modifier.weight(1f))
+                        RecordFieldChip(label = "HINT", value = record.passwordHint, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
+                    }
+                }
+
+                module == HudModule.BANK_MELAT || record.fatherName != "-" -> {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -804,6 +913,22 @@ private fun IdentityRecordHudRow(
                             color = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.fillMaxWidth()
                         )
+                    }
+                }
+
+                module == HudModule.TELEGRAM -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        RecordFieldChip(label = "ACCOUNT_ID", value = record.accountOrHandle, color = HudCyan, modifier = Modifier.weight(1f))
+                        RecordFieldChip(label = "PHONE", value = record.phone, color = HudLime, modifier = Modifier.weight(1f))
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        RecordFieldChip(label = "USERNAME", value = record.username, color = accentColor, modifier = Modifier.weight(1f))
                     }
                 }
 

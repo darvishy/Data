@@ -1,5 +1,6 @@
 package com.example
 
+import com.example.data.TextNormalizer
 import com.example.engine.CsvSchemaParser
 import com.example.engine.GpuComputeAccelerator
 import com.example.model.HudModule
@@ -10,18 +11,72 @@ import org.junit.Test
 class ExampleUnitTest {
 
     @Test
-    fun `verify 8 HUD modules match exact required labels`() {
+    fun `verify 6 HUD modules have clean unnumbered names without BankSepah or BankTejarat`() {
         val expected = listOf(
-            "1-BankMeli",
-            "2-BankMelat",
-            "3BankSaderat",
-            "4-BankTejarat",
-            "5-BankSepah",
-            "6-Citizen",
-            "7-Irancell",
-            "8-Telegram"
+            "BankMeli",
+            "BankMelat",
+            "BankSaderat",
+            "Citizen",
+            "Irancell",
+            "Telegram"
         )
         assertEquals(expected, HudModule.entries.map { it.displayLabel })
+    }
+
+    @Test
+    fun `verify Persian and Arabic digits and Yeh Kaf normalization for search`() {
+        val raw = "۰۹۱۲۳۴۵۶۷۸۹ يحيى كريمي\u200Cنژاد"
+        val normalized = TextNormalizer.normalizeForSearch(raw)
+        assertEquals("09123456789 یحیی کریمی نژاد", normalized)
+    }
+
+    @Test
+    fun `verify BankMeli 5 column CSV format with and without header`() {
+        val headerLine = "NATIONAL_CODE,CARD_NO,FULL_NAME,BIRTH_DATE,MOBILE"
+        assertTrue(CsvSchemaParser.looksLikeCsvHeader(headerLine))
+        val headers = CsvSchemaParser.splitCsvLineFast(headerLine)
+
+        val rowLine = "0019283746,6037997112345678,Aria Parsa,1368/04/15,09121112233"
+
+        val parsedHeader = CsvSchemaParser.parseIdentityCsvRow("bank_meli", rowLine, headers, 0)
+        val parsedPositional = CsvSchemaParser.parseIdentityCsvRow("bank_meli", rowLine, null, 0)
+
+        for (parsed in listOf(parsedHeader, parsedPositional)) {
+            assertEquals("0019283746", parsed.nationalCode)
+            assertEquals("6037997112345678", parsed.cardNumber)
+            assertEquals("Aria Parsa", parsed.fullName)
+            assertEquals("1368/04/15", parsed.birthDate)
+            assertEquals("09121112233", parsed.phone)
+        }
+    }
+
+    @Test
+    fun `verify BankSaderat 12 column CSV format with and without header`() {
+        val headerLine =
+            "AccountNumber,DefineationNumber,FullName,CardNumber,Password_Hint,user_email_address,Passw,user_phone_number,Member,Username,DefineNum_Old,ID_Branch"
+        assertTrue(CsvSchemaParser.looksLikeCsvHeader(headerLine))
+        val headers = CsvSchemaParser.splitCsvLineFast(headerLine)
+
+        val rowLine =
+            "0102000012345,50001234,Kian Rad,6037691912345678,FirstPet,kian.rad@bsi.ir,BSI#9988,09123334455,MBR-7788,kian_rad,OLD-4455,BR-210"
+
+        val parsedHeader = CsvSchemaParser.parseIdentityCsvRow("bank_saderat", rowLine, headers, 0)
+        val parsedPositional = CsvSchemaParser.parseIdentityCsvRow("bank_saderat", rowLine, null, 0)
+
+        for (parsed in listOf(parsedHeader, parsedPositional)) {
+            assertEquals("0102000012345", parsed.accountOrHandle)
+            assertEquals("50001234", parsed.idNumber)
+            assertEquals("Kian Rad", parsed.fullName)
+            assertEquals("6037691912345678", parsed.cardNumber)
+            assertEquals("FirstPet", parsed.passwordHint)
+            assertEquals("kian.rad@bsi.ir", parsed.email)
+            assertEquals("BSI#9988", parsed.passwValue)
+            assertEquals("09123334455", parsed.phone)
+            assertEquals("MBR-7788", parsed.memberCode)
+            assertEquals("kian_rad", parsed.username)
+            assertEquals("OLD-4455", parsed.defNumOld)
+            assertEquals("BR-210", parsed.branchId)
+        }
     }
 
     @Test
@@ -78,11 +133,31 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun `verify Telegram semicolon 5 column CSV format with and without header`() {
+        val headerLine = "account_id;phone;username;first_name;last_name"
+        assertTrue(CsvSchemaParser.looksLikeCsvHeader(headerLine))
+        val headers = CsvSchemaParser.splitCsvLineFast(headerLine)
+
+        val rowLine = "784512963;989123456789;nullemperor_dev;Aria;Parsa"
+
+        val parsedHeader = CsvSchemaParser.parseIdentityCsvRow("telegram", rowLine, headers, 0)
+        val parsedPositional = CsvSchemaParser.parseIdentityCsvRow("telegram", rowLine, null, 0)
+
+        for (parsed in listOf(parsedHeader, parsedPositional)) {
+            assertEquals("784512963", parsed.accountOrHandle)
+            assertEquals("784512963", parsed.nationalCode)
+            assertEquals("989123456789", parsed.phone)
+            assertEquals("@nullemperor_dev", parsed.username)
+            assertEquals("Aria Parsa", parsed.fullName)
+        }
+    }
+
+    @Test
     fun `verify GPU signature accelerator deterministic batch hashing`() {
         val accelerator = GpuComputeAccelerator()
         val sampleBatch = listOf(
-            "0019283746,4400112233,Aria Parsa,Dariush,45821,1368/04/15,Tehran,Tehran,Shiraz,Fars,Valiasr,6104337812345678,09121112233",
-            "Sara Shirazi,1372/09/21,0099887766,1415567890,09354445566,Shiraz,Zand Blvd"
+            "0019283746,6037997112345678,Aria Parsa,1368/04/15,09121112233",
+            "0102000012345,50001234,Kian Rad,6037691912345678,FirstPet,kian.rad@bsi.ir,BSI#9988,09123334455,MBR-7788,kian_rad,OLD-4455,BR-210"
         )
         val result = accelerator.computeBatchSignatures(sampleBatch, 0.25f)
         assertEquals(2, result.signatures.size)

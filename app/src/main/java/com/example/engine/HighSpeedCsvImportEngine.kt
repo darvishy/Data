@@ -5,8 +5,11 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import com.example.data.AppDatabase
 import com.example.data.IdentityEntity
+import com.example.data.TextNormalizer
+import java.io.BufferedInputStream
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.nio.charset.Charset
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
@@ -72,6 +75,13 @@ data class ParsedCsvIdentityRow(
     val birthProvince: String = "-",
     val postalCode: String = "-",
     val address: String = "-",
+    val email: String = "-",
+    val username: String = "-",
+    val memberCode: String = "-",
+    val branchId: String = "-",
+    val defNumOld: String = "-",
+    val passwordHint: String = "-",
+    val passwValue: String = "-",
     val rawDetails: String = ""
 )
 
@@ -84,19 +94,33 @@ object CsvSchemaParser {
             clean.contains("fullname") ||
             clean.contains("full_name") ||
             clean.contains("account_number") ||
+            clean.contains("accountnumber") ||
+            clean.contains("defineationnumber") ||
+            clean.contains("cardnumber") ||
+            clean.contains("password_hint") ||
+            clean.contains("user_email_address") ||
+            clean.contains("user_phone_number") ||
+            clean.contains("definenum_old") ||
+            clean.contains("id_branch") ||
             clean.contains("postal code") ||
             clean.contains("father_name") ||
             clean.contains("card_no") ||
             clean.contains("birthday") ||
             clean.contains("birth_date") ||
+            clean.contains("account_id") ||
+            clean.contains("first_name") ||
+            clean.contains("last_name") ||
             (clean.contains("name") && (clean.contains("phone") || clean.contains("mobile")))
     }
 
     fun splitCsvLineFast(line: String): List<String> {
         val cleanLine = line.removePrefix("\uFEFF")
+        val semiCount = cleanLine.count { it == ';' }
+        val commaCount = cleanLine.count { it == ',' }
         val delimiter = when {
-            cleanLine.count { it == ',' } >= cleanLine.count { it == ';' } && cleanLine.contains(',') -> ','
-            cleanLine.contains(';') -> ';'
+            semiCount > commaCount && semiCount > 0 -> ';'
+            commaCount > 0 -> ','
+            semiCount > 0 -> ';'
             cleanLine.contains('\t') -> '\t'
             cleanLine.contains('|') -> '|'
             else -> ','
@@ -130,11 +154,14 @@ object CsvSchemaParser {
 
     /**
      * Parses a CSV row according to module-specific schemas and header detection:
+     * - BankMeli (`bank_meli`):
+     *   (NATIONAL_CODE,CARD_NO,FULL_NAME,BIRTH_DATE,MOBILE)
      * - BankMelat (`bank_melat`):
      *   (NATIONAL_CODE,ACCOUNT_NUMBER,FULL_NAME,FATHER_NAME,ID_NUMBER,BIRTH_DATE,CITY_NAME,PROVINCE_NAME,BIRTH_CITY,BIRTH_PROVINCE,ADDRESS,CARD_NO,MOBILE)
+     * - BankSaderat (`bank_saderat`):
+     *   (AccountNumber,DefineationNumber,FullName,CardNumber,Password_Hint,user_email_address,Passw,user_phone_number,Member,Username,DefineNum_Old,ID_Branch)
      * - Citizen (`citizen`):
      *   (FULLNAME,BIRTHDAY,National ID,Postal Code,Phone,City,Address)
-     * - Dynamic header mapping if custom header order is supplied, or module positional fallback.
      */
     fun parseIdentityCsvRow(
         moduleId: String,
@@ -154,24 +181,87 @@ object CsvSchemaParser {
             )
         }
 
-        // If header columns are present, check whether they match BankMelat or Citizen or arbitrary header order
         if (headers != null && headers.size >= 2) {
             return parseWithHeaders(moduleId, cols, headers, index, rawLine)
         }
 
-        // Headerless positional schema mapping
         return when (moduleId) {
+            "bank_meli" -> parseBankMeliPositional(cols, index)
             "bank_melat" -> parseBankMelatPositional(cols, index)
+            "bank_saderat" -> parseBankSaderatPositional(cols, index)
             "citizen" -> parseCitizenPositional(cols, index)
+            "telegram" -> parseTelegramPositional(cols, index)
             else -> {
-                // Auto-detect 13-col BankMelat or 7-col Citizen if imported into another node
-                if (cols.size >= 13) {
-                    parseBankMelatPositional(cols, index)
-                } else {
-                    parseGenericPositional(cols, index, rawLine)
+                when {
+                    cols.size >= 13 -> parseBankMelatPositional(cols, index)
+                    cols.size == 12 -> parseBankSaderatPositional(cols, index)
+                    else -> parseGenericPositional(cols, index, rawLine)
                 }
             }
         }
+    }
+
+    private fun parseTelegramPositional(cols: List<String>, index: Int): ParsedCsvIdentityRow {
+        // (0:account_id; 1:phone; 2:username; 3:first_name; 4:last_name)
+        val accountId = cols.colOrDash(0)
+        val phone = cols.colOrDash(1)
+        val rawUsername = cols.getOrNull(2)?.trim().orEmpty()
+        val username = when {
+            rawUsername.isEmpty() || rawUsername == "-" -> "-"
+            rawUsername.startsWith("@") -> rawUsername
+            else -> "@$rawUsername"
+        }
+        val firstName = cols.getOrNull(3)?.trim().orEmpty()
+        val lastName = cols.getOrNull(4)?.trim().orEmpty()
+        val combinedName = listOf(firstName, lastName)
+            .filter { it.isNotBlank() && it != "-" }
+            .joinToString(" ")
+            .ifBlank {
+                if (username != "-") username else "TG-User-${index + 1}"
+            }
+
+        val extraParts = ArrayList<String>(3)
+        if (firstName.isNotBlank()) extraParts.add("FIRST: $firstName")
+        if (lastName.isNotBlank()) extraParts.add("LAST: $lastName")
+        if (cols.size > 5) {
+            extraParts.add(cols.subList(5, cols.size).joinToString(" | "))
+        }
+
+        return ParsedCsvIdentityRow(
+            originalIndex = index,
+            fullName = combinedName,
+            nationalCode = accountId,
+            phone = phone,
+            accountOrHandle = accountId,
+            username = username,
+            rawDetails = extraParts.joinToString(" • ")
+        )
+    }
+
+    private fun parseBankMeliPositional(cols: List<String>, index: Int): ParsedCsvIdentityRow {
+        // (0:NATIONAL_CODE, 1:CARD_NO, 2:FULL_NAME, 3:BIRTH_DATE, 4:MOBILE)
+        val nationalCode = cols.colOrDash(0)
+        val cardNo = cols.colOrDash(1)
+        val fullName = cols.getOrNull(2)?.takeIf { it.isNotBlank() } ?: "Meli-${index + 1}"
+        val birthDate = cols.colOrDash(3)
+        val mobile = cols.colOrDash(4)
+
+        val extra = if (cols.size > 5) {
+            cols.subList(5, cols.size).joinToString(" | ")
+        } else {
+            ""
+        }
+
+        return ParsedCsvIdentityRow(
+            originalIndex = index,
+            fullName = fullName,
+            nationalCode = nationalCode,
+            phone = mobile,
+            accountOrHandle = "-",
+            cardNumber = cardNo,
+            birthDate = birthDate,
+            rawDetails = extra
+        )
     }
 
     private fun parseBankMelatPositional(cols: List<String>, index: Int): ParsedCsvIdentityRow {
@@ -214,6 +304,48 @@ object CsvSchemaParser {
             birthProvince = birthProvince,
             postalCode = "-",
             address = address,
+            rawDetails = extra
+        )
+    }
+
+    private fun parseBankSaderatPositional(cols: List<String>, index: Int): ParsedCsvIdentityRow {
+        // (0:AccountNumber, 1:DefineationNumber, 2:FullName, 3:CardNumber,
+        //  4:Password_Hint, 5:user_email_address, 6:Passw, 7:user_phone_number,
+        //  8:Member, 9:Username, 10:DefineNum_Old, 11:ID_Branch)
+        val accountNumber = cols.colOrDash(0)
+        val defineationNumber = cols.colOrDash(1)
+        val fullName = cols.getOrNull(2)?.takeIf { it.isNotBlank() } ?: "Saderat-${index + 1}"
+        val cardNumber = cols.colOrDash(3)
+        val passwordHint = cols.colOrDash(4)
+        val email = cols.colOrDash(5)
+        val passw = cols.colOrDash(6)
+        val phone = cols.colOrDash(7)
+        val member = cols.colOrDash(8)
+        val username = cols.colOrDash(9)
+        val defineNumOld = cols.colOrDash(10)
+        val branchId = cols.colOrDash(11)
+
+        val extra = if (cols.size > 12) {
+            cols.subList(12, cols.size).joinToString(" | ")
+        } else {
+            ""
+        }
+
+        return ParsedCsvIdentityRow(
+            originalIndex = index,
+            fullName = fullName,
+            nationalCode = defineationNumber,
+            phone = phone,
+            accountOrHandle = accountNumber,
+            cardNumber = cardNumber,
+            idNumber = defineationNumber,
+            email = email,
+            username = username,
+            memberCode = member,
+            branchId = branchId,
+            defNumOld = defineNumOld,
+            passwordHint = passwordHint,
+            passwValue = passw,
             rawDetails = extra
         )
     }
@@ -275,6 +407,15 @@ object CsvSchemaParser {
         var birthProvince = ""
         var postalCode = ""
         var address = ""
+        var email = ""
+        var username = ""
+        var firstNamePart = ""
+        var lastNamePart = ""
+        var memberCode = ""
+        var branchId = ""
+        var defNumOld = ""
+        var passwordHint = ""
+        var passwValue = ""
         val unmapped = ArrayList<String>(4)
 
         for (i in cols.indices) {
@@ -284,9 +425,21 @@ object CsvSchemaParser {
             if (value.isBlank()) continue
 
             when (norm) {
+                "account_id", "accountid", "user_id", "userid", "tg_id", "telegram_id" -> {
+                    if (accountNumber.isEmpty()) accountNumber = value
+                    if (nationalCode.isEmpty()) nationalCode = value
+                }
+                "first_name", "firstname", "fname" ->
+                    if (firstNamePart.isEmpty()) firstNamePart = value
+                "last_name", "lastname", "lname", "surname" ->
+                    if (lastNamePart.isEmpty()) lastNamePart = value
                 "national_code", "national_id", "nationalid", "meli_code", "ssn", "codemeli" ->
                     if (nationalCode.isEmpty()) nationalCode = value
-                "account_number", "account_no", "account", "iban", "sheba", "username", "handle" ->
+                "defineationnumber", "defineation_number", "definitionnumber", "definition_number" -> {
+                    if (idNumber.isEmpty()) idNumber = value
+                    if (nationalCode.isEmpty()) nationalCode = value
+                }
+                "account_number", "accountnumber", "account_no", "account", "iban", "sheba", "handle" ->
                     if (accountNumber.isEmpty()) accountNumber = value
                 "full_name", "fullname", "name", "customer_name" ->
                     if (fullName.isEmpty()) fullName = value
@@ -308,10 +461,32 @@ object CsvSchemaParser {
                     if (postalCode.isEmpty()) postalCode = value
                 "address", "home_address", "street_address" ->
                     if (address.isEmpty()) address = value
-                "card_no", "card_number", "card", "pan" ->
+                "card_no", "card_number", "cardnumber", "card", "pan" ->
                     if (cardNumber.isEmpty()) cardNumber = value
-                "mobile", "phone", "phone_number", "mobile_no", "tel", "cell" ->
+                "mobile", "phone", "phone_number", "user_phone_number", "mobile_no", "tel", "cell" ->
                     if (phone.isEmpty()) phone = value
+                "user_email_address", "email", "email_address", "mail" ->
+                    if (email.isEmpty()) email = value
+                "username", "user_name", "login" -> {
+                    if (username.isEmpty()) {
+                        username = if (moduleId == "telegram" && !value.startsWith("@") && value != "-") {
+                            "@$value"
+                        } else {
+                            value
+                        }
+                    }
+                    if (accountNumber.isEmpty() && moduleId == "telegram") accountNumber = value
+                }
+                "member", "member_code", "member_id" ->
+                    if (memberCode.isEmpty()) memberCode = value
+                "id_branch", "branch_id", "branch" ->
+                    if (branchId.isEmpty()) branchId = value
+                "definenum_old", "define_num_old", "old_definenum" ->
+                    if (defNumOld.isEmpty()) defNumOld = value
+                "password_hint", "pass_hint", "hint" ->
+                    if (passwordHint.isEmpty()) passwordHint = value
+                "passw", "password", "pass" ->
+                    if (passwValue.isEmpty()) passwValue = value
                 else -> {
                     if (rawHeader.isNotEmpty()) {
                         unmapped.add("$rawHeader: $value")
@@ -322,18 +497,28 @@ object CsvSchemaParser {
             }
         }
 
-        // Fallback if headers had unexpected names
-        if (fullName.isEmpty() && nationalCode.isEmpty()) {
+        if (fullName.isEmpty() && (firstNamePart.isNotEmpty() || lastNamePart.isNotEmpty())) {
+            fullName = listOf(firstNamePart, lastNamePart)
+                .filter { it.isNotBlank() && it != "-" }
+                .joinToString(" ")
+            if (firstNamePart.isNotBlank()) unmapped.add(0, "FIRST: $firstNamePart")
+            if (lastNamePart.isNotBlank()) unmapped.add(if (firstNamePart.isNotBlank()) 1 else 0, "LAST: $lastNamePart")
+        }
+
+        if (fullName.isEmpty() && nationalCode.isEmpty() && accountNumber.isEmpty() && cardNumber.isEmpty() && username.isEmpty()) {
             return when (moduleId) {
+                "bank_meli" -> parseBankMeliPositional(cols, index)
                 "bank_melat" -> parseBankMelatPositional(cols, index)
+                "bank_saderat" -> parseBankSaderatPositional(cols, index)
                 "citizen" -> parseCitizenPositional(cols, index)
+                "telegram" -> parseTelegramPositional(cols, index)
                 else -> parseGenericPositional(cols, index, rawLine)
             }
         }
 
         return ParsedCsvIdentityRow(
             originalIndex = index,
-            fullName = fullName.ifEmpty { "Record-${index + 1}" },
+            fullName = fullName.ifEmpty { if (username.isNotEmpty()) username else "Record-${index + 1}" },
             nationalCode = nationalCode.ifEmpty { "-" },
             phone = phone.ifEmpty { "-" },
             accountOrHandle = accountNumber.ifEmpty { "-" },
@@ -347,6 +532,13 @@ object CsvSchemaParser {
             birthProvince = birthProvince.ifEmpty { "-" },
             postalCode = postalCode.ifEmpty { "-" },
             address = address.ifEmpty { "-" },
+            email = email.ifEmpty { "-" },
+            username = username.ifEmpty { "-" },
+            memberCode = memberCode.ifEmpty { "-" },
+            branchId = branchId.ifEmpty { "-" },
+            defNumOld = defNumOld.ifEmpty { "-" },
+            passwordHint = passwordHint.ifEmpty { "-" },
+            passwValue = passwValue.ifEmpty { "-" },
             rawDetails = unmapped.joinToString(" | ")
         )
     }
@@ -465,8 +657,10 @@ class HighSpeedCsvImportEngine(
                     statusLog = "STREAMING CSV [$fileName] ON $cpuThreadCount CPU CORES + ${gpuAccelerator.rendererInfo}"
                 )
 
-                val inputStream = context.contentResolver.openInputStream(uri)
+                val rawStream = context.contentResolver.openInputStream(uri)
                     ?: throw IllegalStateException("Unable to open selected CSV stream.")
+                val bufferedStream = BufferedInputStream(rawStream, 262_144)
+                val detectedCharset = detectCsvCharset(bufferedStream)
 
                 val startWallMs = System.currentTimeMillis()
                 var activeDurationAccumulatorMs = 0L
@@ -479,7 +673,7 @@ class HighSpeedCsvImportEngine(
                 var checkedFirstNonEmptyLine = false
                 val chunkBuffer = ArrayList<String>(3500)
 
-                BufferedReader(InputStreamReader(inputStream, Charsets.UTF_8), 262_144).use { reader ->
+                BufferedReader(InputStreamReader(bufferedStream, detectedCharset), 262_144).use { reader ->
                     var line: String? = reader.readLine()
                     while (line != null) {
                         ensureActive()
@@ -544,6 +738,12 @@ class HighSpeedCsvImportEngine(
                     }
                 }
 
+                try {
+                    database.identityDao().rebuildFtsIndex()
+                } catch (_: Exception) {
+                    // Safe fallback
+                }
+
                 val finalCount = processedRows.get()
                 val totalActiveMs = (activeDurationAccumulatorMs +
                     (System.currentTimeMillis() - lastResumeTimestampMs)).coerceAtLeast(1L)
@@ -582,11 +782,11 @@ class HighSpeedCsvImportEngine(
     }
 
     /**
-     * Generates and streams a module-accurate synthetic CSV dataset:
-     * - BankMelat uses exact 13-column CSV format:
-     *   NATIONAL_CODE,ACCOUNT_NUMBER,FULL_NAME,FATHER_NAME,ID_NUMBER,BIRTH_DATE,CITY_NAME,PROVINCE_NAME,BIRTH_CITY,BIRTH_PROVINCE,ADDRESS,CARD_NO,MOBILE
-     * - Citizen uses exact 7-column CSV format:
-     *   FULLNAME,BIRTHDAY,National ID,Postal Code,Phone,City,Address
+     * Generates and streams a module-accurate synthetic CSV dataset matching each module's exact CSV schema:
+     * - BankMeli: NATIONAL_CODE,CARD_NO,FULL_NAME,BIRTH_DATE,MOBILE
+     * - BankMelat: NATIONAL_CODE,ACCOUNT_NUMBER,FULL_NAME,FATHER_NAME,ID_NUMBER,BIRTH_DATE,CITY_NAME,PROVINCE_NAME,BIRTH_CITY,BIRTH_PROVINCE,ADDRESS,CARD_NO,MOBILE
+     * - BankSaderat: AccountNumber,DefineationNumber,FullName,CardNumber,Password_Hint,user_email_address,Passw,user_phone_number,Member,Username,DefineNum_Old,ID_Branch
+     * - Citizen: FULLNAME,BIRTHDAY,National ID,Postal Code,Phone,City,Address
      */
     fun runHighSpeedCsvStreamBenchmark(moduleId: String, targetRecords: Int = 100_000) {
         activeImportJob?.cancel()
@@ -600,21 +800,35 @@ class HighSpeedCsvImportEngine(
                 }
 
                 val avgBytesPerRow = when (moduleId) {
+                    "bank_meli" -> 68L
                     "bank_melat" -> 148L
+                    "bank_saderat" -> 152L
                     "citizen" -> 108L
+                    "telegram" -> 64L
                     else -> 84L
                 }
                 val totalBytes = targetRecords.toLong() * avgBytesPerRow
 
                 val schemaHeader = when (moduleId) {
+                    "bank_meli" -> listOf(
+                        "NATIONAL_CODE", "CARD_NO", "FULL_NAME", "BIRTH_DATE", "MOBILE"
+                    )
                     "bank_melat" -> listOf(
                         "NATIONAL_CODE", "ACCOUNT_NUMBER", "FULL_NAME", "FATHER_NAME",
                         "ID_NUMBER", "BIRTH_DATE", "CITY_NAME", "PROVINCE_NAME",
                         "BIRTH_CITY", "BIRTH_PROVINCE", "ADDRESS", "CARD_NO", "MOBILE"
                     )
+                    "bank_saderat" -> listOf(
+                        "AccountNumber", "DefineationNumber", "FullName", "CardNumber",
+                        "Password_Hint", "user_email_address", "Passw", "user_phone_number",
+                        "Member", "Username", "DefineNum_Old", "ID_Branch"
+                    )
                     "citizen" -> listOf(
                         "FULLNAME", "BIRTHDAY", "National ID", "Postal Code",
                         "Phone", "City", "Address"
+                    )
+                    "telegram" -> listOf(
+                        "account_id", "phone", "username", "first_name", "last_name"
                     )
                     else -> null
                 }
@@ -689,6 +903,10 @@ class HighSpeedCsvImportEngine(
                                     val address = "District ${(globalIdx % 22) + 1} Blvd ${globalIdx % 90} Unit ${(globalIdx % 16) + 1}"
 
                                     when (moduleId) {
+                                        "bank_meli" -> {
+                                            val cardNo = "60379971%08d".format(globalIdx % 100_000_000)
+                                            list.add("$natId,$cardNo,$fn $ln,$birthDate,$mobile")
+                                        }
                                         "bank_melat" -> {
                                             val accNo = "%010d".format(4400000000L + globalIdx)
                                             val father = fatherNames[globalIdx % fatherNames.size]
@@ -698,11 +916,32 @@ class HighSpeedCsvImportEngine(
                                                 "$natId,$accNo,$fn $ln,$father,$idNo,$birthDate,${cities[cityIdx]},${provinces[cityIdx]},${cities[birthIdx]},${provinces[birthIdx]},\"$address\",$cardNo,$mobile"
                                             )
                                         }
+                                        "bank_saderat" -> {
+                                            val accNo = "010%010d".format(2000000000L + globalIdx)
+                                            val defNo = "%08d".format(50000000 + globalIdx)
+                                            val cardNo = "60376919%08d".format(globalIdx % 100_000_000)
+                                            val hint = "HNT-${(globalIdx % 900) + 100}"
+                                            val email = "${fn.lowercase()}.${ln.lowercase()}${globalIdx % 999}@bsi-mail.ir"
+                                            val passw = "BSI#${100000 + (globalIdx % 899999)}"
+                                            val member = "MBR-${10000 + (globalIdx % 89999)}"
+                                            val username = "${fn.lowercase()}_${globalIdx}"
+                                            val defOld = "OLD-${300000 + (globalIdx % 699999)}"
+                                            val branchId = "BR-${(globalIdx % 2500) + 100}"
+                                            list.add(
+                                                "$accNo,$defNo,$fn $ln,$cardNo,$hint,$email,$passw,$mobile,$member,$username,$defOld,$branchId"
+                                            )
+                                        }
                                         "citizen" -> {
                                             val postal = "%010d".format((1415500000L + globalIdx * 313L) % 9_999_999_999L)
                                             list.add(
                                                 "$fn $ln,$birthDate,$natId,$postal,$mobile,${cities[cityIdx]},\"$address\""
                                             )
+                                        }
+                                        "telegram" -> {
+                                            val tgId = "${500000000L + globalIdx * 17L}"
+                                            val tgPhone = "989%09d".format((120000000L + globalIdx * 104729L) % 999_999_999L)
+                                            val tgUser = "${fn.lowercase()}_${ln.lowercase()}_${globalIdx % 9999}"
+                                            list.add("$tgId;$tgPhone;$tgUser;$fn;$ln")
                                         }
                                         else -> {
                                             val acc = "${moduleId.uppercase().take(4)}-${1000000 + globalIdx}"
@@ -732,6 +971,12 @@ class HighSpeedCsvImportEngine(
                         activeElapsedMs = activeDurationAccumulatorMs +
                             (System.currentTimeMillis() - lastResumeTimestampMs)
                     )
+                }
+
+                try {
+                    database.identityDao().rebuildFtsIndex()
+                } catch (_: Exception) {
+                    // Safe fallback
                 }
 
                 val finalCount = processedRows.get()
@@ -822,21 +1067,28 @@ class HighSpeedCsvImportEngine(
             entities.add(
                 IdentityEntity(
                     moduleId = moduleId,
-                    fullName = row.fullName,
-                    nationalCode = row.nationalCode,
-                    phone = row.phone,
-                    accountOrHandle = row.accountOrHandle,
-                    cardNumber = row.cardNumber,
-                    fatherName = row.fatherName,
-                    idNumber = row.idNumber,
-                    birthDate = row.birthDate,
-                    city = row.city,
-                    province = row.province,
-                    birthCity = row.birthCity,
-                    birthProvince = row.birthProvince,
-                    postalCode = row.postalCode,
-                    address = row.address,
-                    rawDetails = row.rawDetails,
+                    fullName = TextNormalizer.normalizeForSearch(row.fullName).ifEmpty { row.fullName },
+                    nationalCode = TextNormalizer.normalizeForSearch(row.nationalCode).ifEmpty { "-" },
+                    phone = TextNormalizer.normalizeForSearch(row.phone).ifEmpty { "-" },
+                    accountOrHandle = TextNormalizer.normalizeForSearch(row.accountOrHandle).ifEmpty { "-" },
+                    cardNumber = TextNormalizer.normalizeForSearch(row.cardNumber).ifEmpty { "-" },
+                    fatherName = TextNormalizer.normalizeForSearch(row.fatherName).ifEmpty { "-" },
+                    idNumber = TextNormalizer.normalizeForSearch(row.idNumber).ifEmpty { "-" },
+                    birthDate = TextNormalizer.normalizeForSearch(row.birthDate).ifEmpty { "-" },
+                    city = TextNormalizer.normalizeForSearch(row.city).ifEmpty { "-" },
+                    province = TextNormalizer.normalizeForSearch(row.province).ifEmpty { "-" },
+                    birthCity = TextNormalizer.normalizeForSearch(row.birthCity).ifEmpty { "-" },
+                    birthProvince = TextNormalizer.normalizeForSearch(row.birthProvince).ifEmpty { "-" },
+                    postalCode = TextNormalizer.normalizeForSearch(row.postalCode).ifEmpty { "-" },
+                    address = TextNormalizer.normalizeForSearch(row.address).ifEmpty { "-" },
+                    email = TextNormalizer.normalizeForSearch(row.email).ifEmpty { "-" },
+                    username = TextNormalizer.normalizeForSearch(row.username).ifEmpty { "-" },
+                    memberCode = TextNormalizer.normalizeForSearch(row.memberCode).ifEmpty { "-" },
+                    branchId = TextNormalizer.normalizeForSearch(row.branchId).ifEmpty { "-" },
+                    defNumOld = TextNormalizer.normalizeForSearch(row.defNumOld).ifEmpty { "-" },
+                    passwordHint = TextNormalizer.normalizeForSearch(row.passwordHint).ifEmpty { "-" },
+                    passwValue = TextNormalizer.normalizeForSearch(row.passwValue).ifEmpty { "-" },
+                    rawDetails = TextNormalizer.normalizeForSearch(row.rawDetails),
                     gpuSignatureHash = sig,
                     importedAt = nowTimestamp
                 )
@@ -907,5 +1159,70 @@ class HighSpeedCsvImportEngine(
             // Fallback to default metadata
         }
         return displayName to size
+    }
+
+    private fun detectCsvCharset(stream: BufferedInputStream): Charset {
+        stream.mark(8192)
+        val sample = ByteArray(4096)
+        var totalRead = 0
+        while (totalRead < sample.size) {
+            val n = stream.read(sample, totalRead, sample.size - totalRead)
+            if (n <= 0) break
+            totalRead += n
+        }
+        stream.reset()
+        if (totalRead >= 2) {
+            val b0 = sample[0].toInt() and 0xFF
+            val b1 = sample[1].toInt() and 0xFF
+            if (b0 == 0xFF && b1 == 0xFE) return Charsets.UTF_16LE
+            if (b0 == 0xFE && b1 == 0xFF) return Charsets.UTF_16BE
+        }
+        if (totalRead >= 3) {
+            val b0 = sample[0].toInt() and 0xFF
+            val b1 = sample[1].toInt() and 0xFF
+            val b2 = sample[2].toInt() and 0xFF
+            if (b0 == 0xEF && b1 == 0xBB && b2 == 0xBF) return Charsets.UTF_8
+        }
+        // Check if sample bytes form valid UTF-8; if invalid high bytes exist, fall back to Windows-1256 (Persian/Arabic ANSI)
+        if (!isValidUtf8Sample(sample, totalRead)) {
+            return try {
+                Charset.forName("windows-1256")
+            } catch (_: Exception) {
+                Charsets.UTF_8
+            }
+        }
+        return Charsets.UTF_8
+    }
+
+    private fun isValidUtf8Sample(bytes: ByteArray, length: Int): Boolean {
+        var i = 0
+        while (i < length) {
+            val b = bytes[i].toInt() and 0xFF
+            when {
+                b <= 0x7F -> i++
+                b in 0xC2..0xDF -> {
+                    if (i + 1 >= length) return true // truncated at end of sample buffer
+                    if ((bytes[i + 1].toInt() and 0xC0) != 0x80) return false
+                    i += 2
+                }
+                b in 0xE0..0xEF -> {
+                    if (i + 2 >= length) return true
+                    val b1 = bytes[i + 1].toInt() and 0xFF
+                    val b2 = bytes[i + 2].toInt() and 0xFF
+                    if ((b1 and 0xC0) != 0x80 || (b2 and 0xC0) != 0x80) return false
+                    i += 3
+                }
+                b in 0xF0..0xF4 -> {
+                    if (i + 3 >= length) return true
+                    val b1 = bytes[i + 1].toInt() and 0xFF
+                    val b2 = bytes[i + 2].toInt() and 0xFF
+                    val b3 = bytes[i + 3].toInt() and 0xFF
+                    if ((b1 and 0xC0) != 0x80 || (b2 and 0xC0) != 0x80 || (b3 and 0xC0) != 0x80) return false
+                    i += 4
+                }
+                else -> return false
+            }
+        }
+        return true
     }
 }

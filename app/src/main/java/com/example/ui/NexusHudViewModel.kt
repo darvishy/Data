@@ -184,13 +184,15 @@ class NexusHudViewModel(application: Application) : AndroidViewModel(application
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
             if (query.isNotBlank()) {
-                delay(90L)
+                delay(75L)
             }
             identityRepository.executeVisibleHighSpeedSearch(
                 moduleId = module.id,
                 rawQuery = query,
                 onStageUpdate = { telemetry ->
-                    _searchTelemetry.value = telemetry
+                    if (_uiState.value.selectedModule == module) {
+                        _searchTelemetry.value = telemetry
+                    }
                 }
             )
         }
@@ -227,12 +229,16 @@ class NexusHudViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun refreshModuleDefaultRecords(module: HudModule) {
-        viewModelScope.launch {
+        searchJob?.cancel()
+        val activeQuery = _searchTelemetry.value.query
+        searchJob = viewModelScope.launch {
             identityRepository.executeVisibleHighSpeedSearch(
                 moduleId = module.id,
-                rawQuery = _searchTelemetry.value.query,
+                rawQuery = activeQuery,
                 onStageUpdate = { telemetry ->
-                    _searchTelemetry.value = telemetry
+                    if (_uiState.value.selectedModule == module) {
+                        _searchTelemetry.value = telemetry
+                    }
                 }
             )
         }
