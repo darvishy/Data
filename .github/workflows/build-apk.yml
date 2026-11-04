@@ -23,23 +23,47 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Configure Android SDK and accept licenses
         run: |
-          set -euo pipefail
+          set -eu
           SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$SDK_DIR" ]; then
+            SDK_DIR="$HOME/android-sdk"
+            mkdir -p "$SDK_DIR/cmdline-tools"
+            CMD_ZIP="$(mktemp)"
+            curl -fsSL "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" -o "$CMD_ZIP"
+            unzip -q "$CMD_ZIP" -d "$SDK_DIR/cmdline-tools"
+            mv "$SDK_DIR/cmdline-tools/cmdline-tools" "$SDK_DIR/cmdline-tools/latest"
+            rm -f "$CMD_ZIP"
+          fi
+
+          if [ ! -w "$SDK_DIR" ] && command -v sudo >/dev/null 2>&1; then
+            sudo chown -R "$(id -u):$(id -g)" "$SDK_DIR" || true
+          fi
+
           export ANDROID_HOME="$SDK_DIR"
           export ANDROID_SDK_ROOT="$SDK_DIR"
           echo "ANDROID_HOME=$SDK_DIR" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$SDK_DIR" >> "$GITHUB_ENV"
+
           mkdir -p "$SDK_DIR/licenses"
           printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n84831b9409646a918e30573bab4c9c91346d8abd\nd56f5187479451eabf01fb78af6dfcb131a6481e\n" > "$SDK_DIR/licenses/android-sdk-license"
           printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n" > "$SDK_DIR/licenses/android-sdk-preview-license"
+
+          SDKMANAGER=""
           if [ -x "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager" ]; then
-            yes | "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+            SDKMANAGER="$SDK_DIR/cmdline-tools/latest/bin/sdkmanager"
+          elif [ -d "$SDK_DIR/cmdline-tools" ]; then
+            SDKMANAGER="$(find "$SDK_DIR/cmdline-tools" -type f -name sdkmanager | head -n 1 || true)"
           fi
+
+          if [ -n "$SDKMANAGER" ] && [ -x "$SDKMANAGER" ]; then
+            set +e
+            yes | "$SDKMANAGER" --sdk_root="$SDK_DIR" --licenses >/dev/null 2>&1
+            "$SDKMANAGER" --sdk_root="$SDK_DIR" "platform-tools" "build-tools;36.0.0" "platforms;android-36.1" >/dev/null
+            set -e
+          fi
+          echo "Android SDK ready at: $SDK_DIR"
 
       - name: Set up Gradle 9.3.1
         uses: gradle/actions/setup-gradle@v4
@@ -113,7 +137,7 @@ jobs:
       - name: Publish APK to GitHub Releases
         id: publish_release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           ASSET_PATH="${{ steps.prepare_asset.outputs.asset_path }}"
@@ -133,10 +157,11 @@ jobs:
           - Sub-millisecond 3-tier B-Tree + FTS4 search pipeline & cached HUD backdrop rendering
           EOF
 
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "$ASSET_PATH" --clobber
+          if gh release view "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$ASSET_PATH" --repo "${GITHUB_REPOSITORY}" --clobber
           else
             gh release create "$RELEASE_TAG" "$ASSET_PATH" \
+              --repo "${GITHUB_REPOSITORY}" \
               --title "$RELEASE_TITLE" \
               --notes-file "$NOTES_FILE" \
               --target "$GITHUB_SHA" \
@@ -149,7 +174,7 @@ jobs:
       - name: Report APK download result
         if: always()
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           RELEASE_OUTCOME="${{ steps.publish_release.outcome }}"
@@ -157,7 +182,7 @@ jobs:
           RELEASE_TITLE="Nexus HUD APK Build #${GITHUB_RUN_NUMBER}"
 
           if [ "$RELEASE_OUTCOME" = "success" ]; then
-            RELEASE_URL="$(gh release view "$RELEASE_TAG" --json url --jq .url)"
+            RELEASE_URL="$(gh release view "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" --json url --jq .url)"
             DIRECT_APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/app-debug.apk"
 
             {
