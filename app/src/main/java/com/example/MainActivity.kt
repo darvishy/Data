@@ -121,6 +121,7 @@ fun NexusHudApp(
                         searchTelemetry = searchTelemetry,
                         onBack = viewModel::closeModuleToGrid,
                         onImportCsvUri = viewModel::startCsvImportFromUri,
+                        onImportMdfLdfUris = viewModel::startMdfLdfImportFromUris,
                         onRunBenchmarkStream = viewModel::startSyntheticBenchmarkStream,
                         onPauseImport = viewModel::pauseCsvImport,
                         onResumeImport = viewModel::resumeCsvImport,

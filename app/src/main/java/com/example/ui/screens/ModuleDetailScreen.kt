@@ -89,6 +89,7 @@ fun ModuleDetailScreen(
     searchTelemetry: SearchTelemetry,
     onBack: () -> Unit,
     onImportCsvUri: (Uri) -> Unit,
+    onImportMdfLdfUris: (List<Uri>) -> Unit = { uris -> uris.firstOrNull()?.let(onImportCsvUri) },
     onRunBenchmarkStream: (Int) -> Unit,
     onPauseImport: () -> Unit,
     onResumeImport: () -> Unit,
@@ -105,6 +106,14 @@ fun ModuleDetailScreen(
     ) { uri: Uri? ->
         if (uri != null) {
             onImportCsvUri(uri)
+        }
+    }
+
+    val mdfLdfPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) {
+            onImportMdfLdfUris(uris)
         }
     }
 
@@ -187,20 +196,29 @@ fun ModuleDetailScreen(
                 }
             }
 
-            // Dedicated CSV Import & CPU+GPU Engine Telemetry Panel
+            // Dedicated Database Import & CPU+GPU Engine Telemetry Panel
             item {
                 CsvImportTelemetryPanel(
                     module = module,
                     importState = importState,
-                    onPickCsv = {
-                        csvPickerLauncher.launch(
-                            arrayOf(
-                                "text/csv",
-                                "text/comma-separated-values",
-                                "text/plain",
-                                "*/*"
+                    onPickDatabase = {
+                        if (module.usesMdfLdfEngine) {
+                            mdfLdfPickerLauncher.launch(
+                                arrayOf(
+                                    "application/octet-stream",
+                                    "*/*"
+                                )
                             )
-                        )
+                        } else {
+                            csvPickerLauncher.launch(
+                                arrayOf(
+                                    "text/csv",
+                                    "text/comma-separated-values",
+                                    "text/plain",
+                                    "*/*"
+                                )
+                            )
+                        }
                     },
                     onRunBenchmark = { onRunBenchmarkStream(100_000) },
                     onPause = onPauseImport,
@@ -264,7 +282,7 @@ fun ModuleDetailScreen(
 private fun CsvImportTelemetryPanel(
     module: HudModule,
     importState: ImportProgressState,
-    onPickCsv: () -> Unit,
+    onPickDatabase: () -> Unit,
     onRunBenchmark: () -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
@@ -274,6 +292,11 @@ private fun CsvImportTelemetryPanel(
         importState.activeModuleId == null || importState.activeModuleId == module.id
     val isRunning = importState.activeModuleId == module.id && importState.status == ImportStatus.RUNNING
     val isPaused = importState.activeModuleId == module.id && importState.status == ImportStatus.PAUSED
+    val importBtnText = if (module.usesMdfLdfEngine) {
+        stringResource(R.string.btn_import_mdf_ldf)
+    } else {
+        stringResource(R.string.btn_import_csv)
+    }
 
     HudChamferedPanel(
         modifier = Modifier.fillMaxWidth(),
@@ -298,7 +321,11 @@ private fun CsvImportTelemetryPanel(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "CPU (${importState.cpuWorkerCount}T) + GPU GLES INGESTION ENGINE",
+                        text = if (module.usesMdfLdfEngine) {
+                            "CPU (${importState.cpuWorkerCount}T) + GPU MDF/LDF PAGE ENGINE"
+                        } else {
+                            "CPU (${importState.cpuWorkerCount}T) + GPU GLES INGESTION ENGINE"
+                        },
                         style = MaterialTheme.typography.labelMedium,
                         color = module.primaryColor
                     )
@@ -316,7 +343,7 @@ private fun CsvImportTelemetryPanel(
                 )
             }
 
-            // Expected CSV Schema Specification Strip
+            // Expected Schema Specification Strip
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -326,7 +353,11 @@ private fun CsvImportTelemetryPanel(
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 Text(
-                    text = "CSV FORMAT SPECIFICATION // ${stringResource(module.labelRes).uppercase()}",
+                    text = if (module.usesMdfLdfEngine) {
+                        stringResource(R.string.mdf_ldf_format_header)
+                    } else {
+                        "CSV FORMAT SPECIFICATION // ${stringResource(module.labelRes).uppercase()}"
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = HudAmber
                 )
@@ -338,13 +369,13 @@ private fun CsvImportTelemetryPanel(
                 )
             }
 
-            // Dedicated CSV Import Button + Optional High-Speed Stream Benchmark Button
+            // Dedicated Database Import Button + Optional High-Speed Stream Benchmark Button
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Button(
-                    onClick = onPickCsv,
+                    onClick = onPickDatabase,
                     enabled = !isRunning && !isPaused,
                     shape = CutCornerShape(topStart = 10.dp, bottomEnd = 10.dp),
                     colors = ButtonDefaults.buttonColors(
@@ -359,12 +390,12 @@ private fun CsvImportTelemetryPanel(
                 ) {
                     Icon(
                         imageVector = Icons.Filled.FileUpload,
-                        contentDescription = stringResource(R.string.btn_import_csv),
+                        contentDescription = importBtnText,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = stringResource(R.string.btn_import_csv),
+                        text = importBtnText,
                         style = MaterialTheme.typography.labelMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -775,10 +806,13 @@ private fun EmptyModuleRecordsCard(
                 textAlign = TextAlign.Center
             )
             Text(
-                text = if (hasActiveQuery) {
-                    "Try searching by prefix, name, national code, phone number, or account handle."
-                } else {
-                    stringResource(R.string.empty_node_tip)
+                text = when {
+                    hasActiveQuery ->
+                        "Try searching by prefix, name, national code, shenasnameh number, phone, or handle."
+                    module.usesMdfLdfEngine ->
+                        stringResource(R.string.empty_sabtahval_tip)
+                    else ->
+                        stringResource(R.string.empty_node_tip)
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = HudTextSecondary,

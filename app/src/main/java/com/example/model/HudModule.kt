@@ -4,8 +4,8 @@ import androidx.annotation.StringRes
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.AssignmentInd
 import androidx.compose.material.icons.filled.Badge
-import androidx.compose.material.icons.filled.CellTower
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.CurrencyExchange
 import androidx.compose.ui.graphics.Color
@@ -69,15 +69,15 @@ enum class HudModule(
         secondaryColor = HudTeal,
         icon = Icons.Filled.Badge
     ),
-    IRANCELL(
-        id = "irancell",
-        code = "TEL-MTN",
-        labelRes = R.string.node_irancell,
-        displayLabel = "Irancell",
-        sectorTag = "TEL-CELL // IRANCELL",
+    SABT_AHVAL(
+        id = "sabt_ahval",
+        code = "CIV-SABT",
+        labelRes = R.string.node_sabt_ahval,
+        displayLabel = "SabtAhval",
+        sectorTag = "REG-MDF/LDF // SABTAHVAL",
         primaryColor = HudViolet,
         secondaryColor = HudMagenta,
-        icon = Icons.Filled.CellTower
+        icon = Icons.Filled.AssignmentInd
     ),
     TELEGRAM(
         id = "telegram",
@@ -90,6 +90,9 @@ enum class HudModule(
         icon = Icons.AutoMirrored.Filled.Send
     );
 
+    val usesMdfLdfEngine: Boolean
+        get() = this == SABT_AHVAL
+
     val expectedCsvSchema: String
         get() = when (this) {
             BANK_MELI ->
@@ -100,8 +103,8 @@ enum class HudModule(
                 "AccountNumber, DefineationNumber, FullName, CardNumber, Password_Hint, user_email_address, Passw, user_phone_number, Member, Username, DefineNum_Old, ID_Branch"
             CITIZEN ->
                 "FULLNAME, BIRTHDAY, National ID, Postal Code, Phone, City, Address"
-            IRANCELL ->
-                "FULL_NAME, NATIONAL_CODE, MOBILE, ACCOUNT_HANDLE, CITY, ADDRESS"
+            SABT_AHVAL ->
+                "SQL SERVER .MDF (8KB DATA PAGES) + .LDF (TRANSACTION LOG) // NATIONAL_CODE, FIRST_NAME, LAST_NAME, FATHER_NAME, SHENASNAME_NO, BIRTH_DATE, ISSUE_PLACE, SERIAL"
             TELEGRAM ->
                 "account_id;phone;username;first_name;last_name  [FILTER: phone starts with 98]"
         }

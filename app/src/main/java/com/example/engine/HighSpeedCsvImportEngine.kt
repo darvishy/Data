@@ -983,6 +983,13 @@ class HighSpeedCsvImportEngine(
     }
 
     fun importCsvFromUri(moduleId: String, uri: Uri) {
+        val (checkName, _) = resolveFileMeta(uri)
+        val lower = checkName.lowercase()
+        if (moduleId == "sabt_ahval" || lower.endsWith(".mdf") || lower.endsWith(".ndf") || lower.endsWith(".ldf")) {
+            importMdfLdfFromUris(moduleId, listOf(uri))
+            return
+        }
+
         activeImportJob?.cancel()
         pauseGate.value = false
 
@@ -1205,12 +1212,488 @@ class HighSpeedCsvImportEngine(
     }
 
     /**
-     * Generates and streams a module-accurate synthetic CSV dataset matching each module's exact CSV schema:
-     * - BankMeli: NATIONAL_CODE,CARD_NO,FULL_NAME,BIRTH_DATE,MOBILE
-     * - BankMelat: NATIONAL_CODE,ACCOUNT_NUMBER,FULL_NAME,FATHER_NAME,ID_NUMBER,BIRTH_DATE,CITY_NAME,PROVINCE_NAME,BIRTH_CITY,BIRTH_PROVINCE,ADDRESS,CARD_NO,MOBILE
-     * - BankSaderat: AccountNumber,DefineationNumber,FullName,CardNumber,Password_Hint,user_email_address,Passw,user_phone_number,Member,Username,DefineNum_Old,ID_Branch
-     * - Citizen: FULLNAME,BIRTHDAY,National ID,Postal Code,Phone,City,Address
-     * - Telegram: account_id;phone;username;first_name;last_name
+     * Streams and imports Microsoft SQL Server `.mdf` (8,192-byte Data Pages + `sys.syscolpars` catalog)
+     * and `.ldf` (Transaction Log `LOP_INSERT_ROWS` / `LOP_FORMAT_PAGE` blocks) database files for SabtAhval.
+     * Supports selecting `.mdf` alone, `.ldf` alone, or `.mdf` + `.ldf` together with automatic deduplication.
+     */
+    fun importMdfLdfFromUris(moduleId: String, uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        activeImportJob?.cancel()
+        pauseGate.value = false
+
+        activeImportJob = externalScope.launch(Dispatchers.IO) {
+            val gpuAccelerator = GpuComputeAccelerator()
+            val pendingEntities = ArrayList<IdentityEntity>(SQL_COMMIT_BATCH_SIZE * 2)
+            val deduplicator = MdfLdfDatabaseParser.CompactRecordDeduplicator()
+            try {
+                val resolvedFiles = uris.map { uri ->
+                    val (name, size) = resolveFileMeta(uri)
+                    Triple(uri, name, size)
+                }.sortedBy { (_, name, _) ->
+                    val lower = name.lowercase()
+                    when {
+                        lower.endsWith(".mdf") || lower.endsWith(".ndf") -> 0
+                        lower.endsWith(".ldf") -> 1
+                        else -> 2
+                    }
+                }
+
+                val combinedLabel = resolvedFiles.joinToString(" + ") { it.second }
+                val totalAllBytes = resolvedFiles.sumOf { it.third.coerceAtLeast(0L) }
+
+                withContext(gpuSingleThreadDispatcher) {
+                    gpuAccelerator.initializeOnCurrentThread()
+                }
+
+                _state.value = ImportProgressState(
+                    status = ImportStatus.RUNNING,
+                    activeModuleId = moduleId,
+                    sourceFileName = combinedLabel,
+                    totalBytes = totalAllBytes,
+                    cpuWorkerCount = cpuThreadCount,
+                    gpuRenderer = gpuAccelerator.rendererInfo,
+                    gpuHardwareActive = gpuAccelerator.isHardwareBound,
+                    statusLog = "MOUNTING SQL SERVER MDF/LDF [$combinedLabel] ON $cpuThreadCount CPU CORES + ${gpuAccelerator.rendererInfo}"
+                )
+
+                val startWallMs = System.currentTimeMillis()
+                var activeDurationAccumulatorMs = 0L
+                var lastResumeTimestampMs = startWallMs
+                var lastUiUpdateMs = 0L
+
+                val processedRows = AtomicLong(0L)
+                val deduplicatedRows = AtomicLong(0L)
+                val processedBytes = AtomicLong(0L)
+                var batchCounter = 0
+
+                val catalogRaw = HashMap<Int, MutableList<Pair<Int, String>>>()
+                var compiledCatalogColumns: Map<Int, List<String>> = emptyMap()
+
+                for ((fileUri, fileName, _) in resolvedFiles) {
+                    ensureActive()
+                    val rawStream = context.contentResolver.openInputStream(fileUri)
+                        ?: throw IllegalStateException("Unable to open database file: $fileName")
+                    BufferedInputStream(rawStream, 1_048_576).use { stream ->
+                        stream.mark(20_480)
+                        val probe = ByteArray(16_384)
+                        val probeRead = readUpTo(stream, probe, 0, probe.size)
+                        stream.reset()
+
+                        val fileKind = MdfLdfDatabaseParser.detectFileKind(fileName, probe, probeRead)
+
+                        when (fileKind) {
+                            MdfLdfDatabaseParser.SqlFileKind.MDF_DATA_FILE -> {
+                                // Stream 128 x 8KB SQL Server Data Pages (1 MB) per chunk across multi-core workers
+                                val chunkBuf = ByteArray(128 * MdfLdfDatabaseParser.MDF_PAGE_SIZE)
+                                while (true) {
+                                    ensureActive()
+                                    if (pauseGate.value) {
+                                        if (pendingEntities.isNotEmpty()) {
+                                            flushPendingEntities(pendingEntities, processedRows)
+                                        }
+                                        activeDurationAccumulatorMs += (System.currentTimeMillis() - lastResumeTimestampMs)
+                                        pauseGate.first { !it }
+                                        lastResumeTimestampMs = System.currentTimeMillis()
+                                    }
+
+                                    val bytesRead = readUpTo(stream, chunkBuf, 0, chunkBuf.size)
+                                    if (bytesRead <= 0) break
+                                    processedBytes.addAndGet(bytesRead.toLong())
+
+                                    val fullPages = bytesRead / MdfLdfDatabaseParser.MDF_PAGE_SIZE
+                                    if (fullPages > 0) {
+                                        val prevCatalogSize = catalogRaw.size
+                                        MdfLdfDatabaseParser.extractCatalogColumnMap(chunkBuf, bytesRead, catalogRaw)
+                                        if (catalogRaw.size != prevCatalogSize) {
+                                            compiledCatalogColumns = catalogRaw.mapValues { entry ->
+                                                entry.value.map { it.second }
+                                            }
+                                        }
+
+                                        val catalogSnapshot = compiledCatalogColumns
+                                        val pageRows = coroutineScope {
+                                            val pagesPerWorker = (fullPages + cpuThreadCount - 1) / cpuThreadCount
+                                            (0 until cpuThreadCount).map { worker ->
+                                                async(Dispatchers.Default) {
+                                                    val pFrom = worker * pagesPerWorker
+                                                    val pTo = minOf(fullPages, pFrom + pagesPerWorker)
+                                                    if (pFrom >= pTo) return@async emptyList<ParsedCsvIdentityRow>()
+                                                    val decoded = ArrayList<ParsedCsvIdentityRow>((pTo - pFrom) * 16)
+                                                    for (p in pFrom until pTo) {
+                                                        val pageOff = p * MdfLdfDatabaseParser.MDF_PAGE_SIZE
+                                                        val rows = MdfLdfDatabaseParser.parseMdfDataPage(
+                                                            buf = chunkBuf,
+                                                            pageOffset = pageOff,
+                                                            baseRowIndex = p * 64,
+                                                            catalogColumns = catalogSnapshot
+                                                        )
+                                                        if (rows.isNotEmpty()) {
+                                                            decoded.addAll(rows)
+                                                        }
+                                                    }
+                                                    decoded
+                                                }
+                                            }.awaitAll().flatten()
+                                        }
+
+                                        val uniqueRows = ArrayList<ParsedCsvIdentityRow>(pageRows.size)
+                                        for (r in pageRows) {
+                                            if (deduplicator.markIfNew(r)) {
+                                                uniqueRows.add(r)
+                                            } else {
+                                                deduplicatedRows.incrementAndGet()
+                                            }
+                                        }
+
+                                        batchCounter++
+                                        lastUiUpdateMs = commitDecodedMdfLdfBatch(
+                                            moduleId = moduleId,
+                                            rows = uniqueRows,
+                                            batchIndex = batchCounter,
+                                            gpuAccelerator = gpuAccelerator,
+                                            pendingEntities = pendingEntities,
+                                            processedRows = processedRows,
+                                            skippedOrDeduped = deduplicatedRows,
+                                            processedBytes = processedBytes.get(),
+                                            totalBytes = totalAllBytes,
+                                            activeElapsedMs = activeDurationAccumulatorMs +
+                                                (System.currentTimeMillis() - lastResumeTimestampMs),
+                                            lastUiUpdateMs = lastUiUpdateMs,
+                                            forceFlush = false
+                                        )
+                                    }
+                                }
+                            }
+
+                            MdfLdfDatabaseParser.SqlFileKind.LDF_LOG_FILE -> {
+                                // Stream 512 KB overlapping Transaction Log blocks to extract LOP_INSERT_ROWS & LOP_FORMAT_PAGE
+                                val ldfBuf = ByteArray(524_288)
+                                var carryBytes = 0
+                                while (true) {
+                                    ensureActive()
+                                    if (pauseGate.value) {
+                                        if (pendingEntities.isNotEmpty()) {
+                                            flushPendingEntities(pendingEntities, processedRows)
+                                        }
+                                        activeDurationAccumulatorMs += (System.currentTimeMillis() - lastResumeTimestampMs)
+                                        pauseGate.first { !it }
+                                        lastResumeTimestampMs = System.currentTimeMillis()
+                                    }
+
+                                    val newlyRead = readUpTo(stream, ldfBuf, carryBytes, ldfBuf.size - carryBytes)
+                                    val validLen = carryBytes + newlyRead.coerceAtLeast(0)
+                                    val isEof = newlyRead <= 0
+                                    if (newlyRead > 0) {
+                                        processedBytes.addAndGet(newlyRead.toLong())
+                                    }
+                                    if (validLen <= 0) break
+
+                                    val (logRows, consumedUntil) = MdfLdfDatabaseParser.scanLdfBufferChunk(
+                                        buf = ldfBuf,
+                                        validLen = validLen,
+                                        isFinalChunk = isEof,
+                                        baseRowIndex = processedRows.get().toInt()
+                                    )
+
+                                    val uniqueLogRows = ArrayList<ParsedCsvIdentityRow>(logRows.size)
+                                    for (r in logRows) {
+                                        if (deduplicator.markIfNew(r)) {
+                                            uniqueLogRows.add(r)
+                                        } else {
+                                            deduplicatedRows.incrementAndGet()
+                                        }
+                                    }
+
+                                    batchCounter++
+                                    lastUiUpdateMs = commitDecodedMdfLdfBatch(
+                                        moduleId = moduleId,
+                                        rows = uniqueLogRows,
+                                        batchIndex = batchCounter,
+                                        gpuAccelerator = gpuAccelerator,
+                                        pendingEntities = pendingEntities,
+                                        processedRows = processedRows,
+                                        skippedOrDeduped = deduplicatedRows,
+                                        processedBytes = processedBytes.get(),
+                                        totalBytes = totalAllBytes,
+                                        activeElapsedMs = activeDurationAccumulatorMs +
+                                            (System.currentTimeMillis() - lastResumeTimestampMs),
+                                        lastUiUpdateMs = lastUiUpdateMs,
+                                        forceFlush = false
+                                    )
+
+                                    if (isEof) break
+                                    carryBytes = (validLen - consumedUntil).coerceAtLeast(0)
+                                    if (carryBytes > 0) {
+                                        System.arraycopy(ldfBuf, consumedUntil, ldfBuf, 0, carryBytes)
+                                    }
+                                }
+                            }
+
+                            MdfLdfDatabaseParser.SqlFileKind.SQL_OR_TEXT_DUMP -> {
+                                val detectedCharset = detectCsvCharset(stream)
+                                val decoder = detectedCharset.newDecoder()
+                                    .onMalformedInput(CodingErrorAction.REPLACE)
+                                    .onUnmappableCharacter(CodingErrorAction.REPLACE)
+                                val decodedAccumulator = ArrayList<ParsedCsvIdentityRow>(RAW_SCAN_CHUNK_SIZE)
+                                BoundedLineReader(InputStreamReader(stream, decoder), maxLineChars = 16_384).use { reader ->
+                                    var line = reader.readBoundedLine()
+                                    while (line != null) {
+                                        ensureActive()
+                                        processedBytes.addAndGet(reader.lastRawCharsConsumed.toLong())
+                                        val rows = MdfLdfDatabaseParser.parseSqlDumpOrDelimitedLine(
+                                            line = line,
+                                            rowIndex = processedRows.get().toInt() + decodedAccumulator.size
+                                        )
+                                        for (r in rows) {
+                                            if (deduplicator.markIfNew(r)) {
+                                                decodedAccumulator.add(r)
+                                            }
+                                        }
+                                        if (decodedAccumulator.size >= RAW_SCAN_CHUNK_SIZE) {
+                                            batchCounter++
+                                            val snap = ArrayList(decodedAccumulator)
+                                            decodedAccumulator.clear()
+                                            lastUiUpdateMs = commitDecodedMdfLdfBatch(
+                                                moduleId = moduleId,
+                                                rows = snap,
+                                                batchIndex = batchCounter,
+                                                gpuAccelerator = gpuAccelerator,
+                                                pendingEntities = pendingEntities,
+                                                processedRows = processedRows,
+                                                skippedOrDeduped = deduplicatedRows,
+                                                processedBytes = processedBytes.get(),
+                                                totalBytes = totalAllBytes,
+                                                activeElapsedMs = activeDurationAccumulatorMs +
+                                                    (System.currentTimeMillis() - lastResumeTimestampMs),
+                                                lastUiUpdateMs = lastUiUpdateMs,
+                                                forceFlush = false
+                                            )
+                                        }
+                                        line = reader.readBoundedLine()
+                                    }
+                                    if (decodedAccumulator.isNotEmpty()) {
+                                        batchCounter++
+                                        lastUiUpdateMs = commitDecodedMdfLdfBatch(
+                                            moduleId = moduleId,
+                                            rows = decodedAccumulator,
+                                            batchIndex = batchCounter,
+                                            gpuAccelerator = gpuAccelerator,
+                                            pendingEntities = pendingEntities,
+                                            processedRows = processedRows,
+                                            skippedOrDeduped = deduplicatedRows,
+                                            processedBytes = processedBytes.get(),
+                                            totalBytes = totalAllBytes,
+                                            activeElapsedMs = activeDurationAccumulatorMs +
+                                                (System.currentTimeMillis() - lastResumeTimestampMs),
+                                            lastUiUpdateMs = lastUiUpdateMs,
+                                            forceFlush = false
+                                        )
+                                        decodedAccumulator.clear()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (pendingEntities.isNotEmpty()) {
+                    flushPendingEntities(pendingEntities, processedRows)
+                }
+
+                try {
+                    database.identityDao().optimizeFtsIndex()
+                } catch (_: Exception) {
+                    // Safe fallback
+                }
+
+                val finalCount = processedRows.get()
+                val deduped = deduplicatedRows.get()
+                val totalActiveMs = (activeDurationAccumulatorMs +
+                    (System.currentTimeMillis() - lastResumeTimestampMs)).coerceAtLeast(1L)
+                val avgRps = (finalCount * 1000L) / totalActiveMs
+                val dedupSuffix = if (deduped > 0L) " ($deduped LDF/MDF DUPLICATES MERGED)" else ""
+
+                _state.update {
+                    it.copy(
+                        status = ImportStatus.COMPLETED,
+                        processedRecords = finalCount,
+                        totalEstimatedRecords = finalCount,
+                        bytesProcessed = if (totalAllBytes > 0L) totalAllBytes else processedBytes.get(),
+                        progressFraction = 1f,
+                        recordsPerSecond = avgRps,
+                        cpuLoadPercent = 0,
+                        gpuLoadPercent = 0,
+                        statusLog = "MDF/LDF IMPORT COMPLETE // $finalCount RECORDS INDEXED AT $avgRps REC/SEC$dedupSuffix"
+                    )
+                }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (oom: OutOfMemoryError) {
+                pendingEntities.clear()
+                System.gc()
+                _state.update {
+                    it.copy(
+                        status = ImportStatus.ERROR,
+                        cpuLoadPercent = 0,
+                        gpuLoadPercent = 0,
+                        errorMessage = "Memory guard triggered while scanning MDF/LDF pages; partial batches committed.",
+                        statusLog = "ERROR // MDF/LDF MEMORY GUARD — PARTIAL BATCHES SAVED"
+                    )
+                }
+            } catch (t: Throwable) {
+                pendingEntities.clear()
+                _state.update {
+                    it.copy(
+                        status = ImportStatus.ERROR,
+                        cpuLoadPercent = 0,
+                        gpuLoadPercent = 0,
+                        errorMessage = t.message ?: "MDF/LDF database ingestion error",
+                        statusLog = "ERROR // ${t.message ?: "MDF/LDF stream failure"}"
+                    )
+                }
+            } finally {
+                withContext(gpuSingleThreadDispatcher) {
+                    gpuAccelerator.release()
+                }
+            }
+        }
+    }
+
+    private fun readUpTo(stream: BufferedInputStream, target: ByteArray, offset: Int, length: Int): Int {
+        var total = 0
+        while (total < length) {
+            val n = stream.read(target, offset + total, length - total)
+            if (n <= 0) break
+            total += n
+        }
+        return total
+    }
+
+    private suspend fun commitDecodedMdfLdfBatch(
+        moduleId: String,
+        rows: List<ParsedCsvIdentityRow>,
+        batchIndex: Int,
+        gpuAccelerator: GpuComputeAccelerator,
+        pendingEntities: ArrayList<IdentityEntity>,
+        processedRows: AtomicLong,
+        skippedOrDeduped: AtomicLong,
+        processedBytes: Long,
+        totalBytes: Long,
+        explicitTotalRecords: Long = 0L,
+        activeElapsedMs: Long,
+        lastUiUpdateMs: Long,
+        forceFlush: Boolean
+    ): Long = coroutineScope {
+        var gpuRendererName = gpuAccelerator.rendererInfo
+        var gpuHardware = gpuAccelerator.isHardwareBound
+        var gpuMicros = 0L
+
+        if (rows.isNotEmpty()) {
+            val signatureInputs = ArrayList<String>(rows.size)
+            for (r in rows) {
+                signatureInputs.add("${r.nationalCode}|${r.fullName}|${r.idNumber}|${r.birthDate}")
+            }
+            val gpuDeferred = async(gpuSingleThreadDispatcher) {
+                gpuAccelerator.computeBatchSignatures(signatureInputs, seedSalt = batchIndex * 0.173f)
+            }
+
+            val sliceSize = (rows.size + cpuThreadCount - 1) / cpuThreadCount
+            val nowTimestamp = System.currentTimeMillis()
+            val normalizedSlicesDeferred = (0 until cpuThreadCount).map { workerIdx ->
+                async(Dispatchers.Default) {
+                    val from = workerIdx * sliceSize
+                    val to = minOf(rows.size, from + sliceSize)
+                    if (from >= to) return@async emptyList<Pair<Int, IdentityEntity>>()
+                    val out = ArrayList<Pair<Int, IdentityEntity>>(to - from)
+                    for (i in from until to) {
+                        val row = rows[i]
+                        out.add(
+                            i to IdentityEntity(
+                                moduleId = moduleId,
+                                fullName = TextNormalizer.normalizeForSearch(row.fullName).ifEmpty { row.fullName },
+                                nationalCode = TextNormalizer.normalizeForSearch(row.nationalCode).ifEmpty { "-" },
+                                phone = TextNormalizer.normalizeForSearch(row.phone).ifEmpty { "-" },
+                                accountOrHandle = TextNormalizer.normalizeForSearch(row.accountOrHandle).ifEmpty { "-" },
+                                cardNumber = TextNormalizer.normalizeForSearch(row.cardNumber).ifEmpty { "-" },
+                                fatherName = TextNormalizer.normalizeForSearch(row.fatherName).ifEmpty { "-" },
+                                idNumber = TextNormalizer.normalizeForSearch(row.idNumber).ifEmpty { "-" },
+                                birthDate = TextNormalizer.normalizeForSearch(row.birthDate).ifEmpty { "-" },
+                                city = TextNormalizer.normalizeForSearch(row.city).ifEmpty { "-" },
+                                province = TextNormalizer.normalizeForSearch(row.province).ifEmpty { "-" },
+                                birthCity = TextNormalizer.normalizeForSearch(row.birthCity).ifEmpty { "-" },
+                                birthProvince = TextNormalizer.normalizeForSearch(row.birthProvince).ifEmpty { "-" },
+                                postalCode = TextNormalizer.normalizeForSearch(row.postalCode).ifEmpty { "-" },
+                                address = TextNormalizer.normalizeForSearch(row.address).ifEmpty { "-" },
+                                email = TextNormalizer.normalizeForSearch(row.email).ifEmpty { "-" },
+                                username = TextNormalizer.normalizeForSearch(row.username).ifEmpty { "-" },
+                                memberCode = TextNormalizer.normalizeForSearch(row.memberCode).ifEmpty { "-" },
+                                branchId = TextNormalizer.normalizeForSearch(row.branchId).ifEmpty { "-" },
+                                defNumOld = TextNormalizer.normalizeForSearch(row.defNumOld).ifEmpty { "-" },
+                                passwordHint = TextNormalizer.normalizeForSearch(row.passwordHint).ifEmpty { "-" },
+                                passwValue = TextNormalizer.normalizeForSearch(row.passwValue).ifEmpty { "-" },
+                                rawDetails = TextNormalizer.normalizeForSearch(row.rawDetails),
+                                gpuSignatureHash = 1L,
+                                importedAt = nowTimestamp
+                            )
+                        )
+                    }
+                    out
+                }
+            }
+
+            val gpuResult = gpuDeferred.await()
+            gpuRendererName = gpuResult.rendererName
+            gpuHardware = gpuResult.hardwareActive
+            gpuMicros = gpuResult.computeMicros
+
+            val slices = normalizedSlicesDeferred.awaitAll()
+            for (slice in slices) {
+                for ((idx, entity) in slice) {
+                    val sig = if (idx in gpuResult.signatures.indices) gpuResult.signatures[idx] else 1L
+                    pendingEntities.add(entity.copy(gpuSignatureHash = sig))
+                }
+            }
+        }
+
+        while (pendingEntities.size >= SQL_COMMIT_BATCH_SIZE) {
+            val commitSlice = ArrayList<IdentityEntity>(SQL_COMMIT_BATCH_SIZE)
+            for (idx in 0 until SQL_COMMIT_BATCH_SIZE) {
+                commitSlice.add(pendingEntities[idx])
+            }
+            pendingEntities.subList(0, SQL_COMMIT_BATCH_SIZE).clear()
+            database.identityDao().insertBatch(commitSlice)
+            processedRows.addAndGet(SQL_COMMIT_BATCH_SIZE.toLong())
+        }
+
+        if (forceFlush && pendingEntities.isNotEmpty()) {
+            flushPendingEntities(pendingEntities, processedRows)
+        }
+
+        val nowMs = System.currentTimeMillis()
+        if (forceFlush || nowMs - lastUiUpdateMs >= UI_TELEMETRY_MIN_INTERVAL_MS) {
+            emitProgressSnapshot(
+                batchIndex = batchIndex,
+                currentTotal = processedRows.get(),
+                skippedTotal = skippedOrDeduped.get(),
+                moduleId = moduleId,
+                processedBytes = processedBytes,
+                totalBytes = totalBytes,
+                explicitTotalRecords = explicitTotalRecords,
+                activeElapsedMs = activeElapsedMs,
+                rendererName = gpuRendererName,
+                hardwareActive = gpuHardware,
+                computeMicros = gpuMicros
+            )
+            return@coroutineScope nowMs
+        }
+        return@coroutineScope lastUiUpdateMs
+    }
+
+    /**
+     * Generates and streams a module-accurate synthetic dataset:
+     * - For `sabt_ahval`: Synthesizes real binary 8KB SQL Server `.mdf` Data Pages + `.ldf` Transaction Log blocks
+     *   and decodes them through [MdfLdfDatabaseParser]!
+     * - For CSV modules (`bank_meli`, `bank_melat`, `bank_saderat`, `citizen`, `telegram`): Streams module-accurate CSV rows.
      */
     fun runHighSpeedCsvStreamBenchmark(moduleId: String, targetRecords: Int = 100_000) {
         activeImportJob?.cancel()
@@ -1229,6 +1712,7 @@ class HighSpeedCsvImportEngine(
                     "bank_melat" -> 148L
                     "bank_saderat" -> 152L
                     "citizen" -> 108L
+                    "sabt_ahval" -> 186L
                     "telegram" -> 64L
                     else -> 84L
                 }
@@ -1260,16 +1744,26 @@ class HighSpeedCsvImportEngine(
                 }
                 val compiledHeaders = schemaHeader?.let { CsvSchemaParser.compileHeaders(it) }
 
+                val benchSourceName = if (moduleId == "sabt_ahval") {
+                    "SabtAhval_Primary.mdf + SabtAhval_Log.ldf"
+                } else {
+                    "${moduleId}_identity_stream_${targetRecords}.csv"
+                }
+
                 _state.value = ImportProgressState(
                     status = ImportStatus.RUNNING,
                     activeModuleId = moduleId,
-                    sourceFileName = "${moduleId}_identity_stream_${targetRecords}.csv",
+                    sourceFileName = benchSourceName,
                     totalEstimatedRecords = targetRecords.toLong(),
                     totalBytes = totalBytes,
                     cpuWorkerCount = cpuThreadCount,
                     gpuRenderer = gpuAccelerator.rendererInfo,
                     gpuHardwareActive = gpuAccelerator.isHardwareBound,
-                    statusLog = "STREAMING ${targetRecords} ${moduleId.uppercase()} CSV RECORDS // $cpuThreadCount CPU WORKERS + GPU SHADER"
+                    statusLog = if (moduleId == "sabt_ahval") {
+                        "STREAMING $targetRecords BINARY MDF PAGES + LDF LOG RECORDS // $cpuThreadCount CPU WORKERS + GPU SHADER"
+                    } else {
+                        "STREAMING ${targetRecords} ${moduleId.uppercase()} CSV RECORDS // $cpuThreadCount CPU WORKERS + GPU SHADER"
+                    }
                 )
 
                 val firstNames = arrayOf(
@@ -1312,6 +1806,102 @@ class HighSpeedCsvImportEngine(
 
                     val currentBatchCount = minOf(batchSize, targetRecords - generated)
                     val baseOffset = generated
+
+                    if (moduleId == "sabt_ahval") {
+                        // Synthesize real binary 8KB SQL Server MDF pages (80%) + LDF transaction log records (20%)
+                        // and decode them directly through MdfLdfDatabaseParser!
+                        val binaryDecodedRows = coroutineScope {
+                            val sliceSize = (currentBatchCount + cpuThreadCount - 1) / cpuThreadCount
+                            (0 until cpuThreadCount).map { worker ->
+                                async(Dispatchers.Default) {
+                                    val startIdx = worker * sliceSize
+                                    val endIdx = minOf(currentBatchCount, startIdx + sliceSize)
+                                    if (startIdx >= endIdx) return@async emptyList<ParsedCsvIdentityRow>()
+
+                                    val mdfSynth = ArrayList<MdfLdfDatabaseParser.BinaryPageSynthesizer.SyntheticSabtRow>()
+                                    val ldfSynth = ArrayList<MdfLdfDatabaseParser.BinaryPageSynthesizer.SyntheticSabtRow>()
+                                    for (local in startIdx until endIdx) {
+                                        val globalIdx = baseOffset + local + 1
+                                        val fn = firstNames[globalIdx % firstNames.size]
+                                        val ln = lastNames[(globalIdx / 7) % lastNames.size]
+                                        val father = fatherNames[globalIdx % fatherNames.size]
+                                        val natNum = ((1029384756L + globalIdx * 7919L) % 9_999_999_999L)
+                                            .toString().padStart(10, '0')
+                                        val mobSuffix = ((120000000L + globalIdx * 104729L) % 999_999_999L)
+                                            .toString().padStart(9, '0')
+                                        val cityIdx = (globalIdx / 13) % cities.size
+                                        val year = 1345 + (globalIdx % 42)
+                                        val month = (globalIdx % 12) + 1
+                                        val day = (globalIdx % 28) + 1
+                                        val bDate = StringBuilder(10).also { appendBirthDate(it, year, month, day) }.toString()
+                                        val postal = ((1415500000L + globalIdx * 313L) % 9_999_999_999L)
+                                            .toString().padStart(10, '0')
+                                        val synth = MdfLdfDatabaseParser.BinaryPageSynthesizer.SyntheticSabtRow(
+                                            nationalCode10 = natNum,
+                                            shenasnameNo = (globalIdx % 899_999) + 1_000,
+                                            firstName = fn,
+                                            lastName = ln,
+                                            fatherName = father,
+                                            birthDate = bDate,
+                                            city = cities[cityIdx],
+                                            province = provinces[cityIdx],
+                                            serial = "A${(globalIdx % 89) + 10}/${100000 + (globalIdx % 899999)}",
+                                            postalCode = postal,
+                                            mobile = "09$mobSuffix"
+                                        )
+                                        if (local % 5 == 4) ldfSynth.add(synth) else mdfSynth.add(synth)
+                                    }
+
+                                    val outRows = ArrayList<ParsedCsvIdentityRow>(endIdx - startIdx)
+                                    if (mdfSynth.isNotEmpty()) {
+                                        val mdfBytes = MdfLdfDatabaseParser.BinaryPageSynthesizer.buildMdfPages(mdfSynth)
+                                        var pOff = 0
+                                        while (pOff + MdfLdfDatabaseParser.MDF_PAGE_SIZE <= mdfBytes.size) {
+                                            outRows.addAll(
+                                                MdfLdfDatabaseParser.parseMdfDataPage(mdfBytes, pOff, baseOffset + outRows.size)
+                                            )
+                                            pOff += MdfLdfDatabaseParser.MDF_PAGE_SIZE
+                                        }
+                                    }
+                                    if (ldfSynth.isNotEmpty()) {
+                                        val ldfBytes = MdfLdfDatabaseParser.BinaryPageSynthesizer.buildLdfLogStream(ldfSynth)
+                                        val (parsedLog, _) = MdfLdfDatabaseParser.scanLdfBufferChunk(
+                                            buf = ldfBytes,
+                                            validLen = ldfBytes.size,
+                                            isFinalChunk = true,
+                                            baseRowIndex = baseOffset + outRows.size
+                                        )
+                                        outRows.addAll(parsedLog)
+                                    }
+                                    outRows
+                                }
+                            }.awaitAll().flatten()
+                        }
+
+                        generated += currentBatchCount
+                        batchIndex++
+                        val bytesNow = generated.toLong() * avgBytesPerRow
+                        val isFinalBatch = generated >= targetRecords
+
+                        lastUiUpdateMs = commitDecodedMdfLdfBatch(
+                            moduleId = moduleId,
+                            rows = binaryDecodedRows,
+                            batchIndex = batchIndex,
+                            gpuAccelerator = gpuAccelerator,
+                            pendingEntities = pendingEntities,
+                            processedRows = processedRows,
+                            skippedOrDeduped = skippedRows,
+                            processedBytes = bytesNow,
+                            totalBytes = totalBytes,
+                            explicitTotalRecords = targetRecords.toLong(),
+                            activeElapsedMs = activeDurationAccumulatorMs +
+                                (System.currentTimeMillis() - lastResumeTimestampMs),
+                            lastUiUpdateMs = lastUiUpdateMs,
+                            forceFlush = isFinalBatch
+                        )
+                        continue
+                    }
+
                     val csvLines = coroutineScope {
                         val sliceSize = (currentBatchCount + cpuThreadCount - 1) / cpuThreadCount
                         (0 until cpuThreadCount).map { worker ->

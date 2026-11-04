@@ -55,7 +55,7 @@ class ExampleRobolectricTest {
             "BankMelat",
             "BankSaderat",
             "Citizen",
-            "Irancell",
+            "SabtAhval",
             "Telegram"
         )
         assertEquals(expectedLabels, HudModule.entries.map { context.getString(it.labelRes) })

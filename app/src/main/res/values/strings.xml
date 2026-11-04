@@ -31,13 +31,16 @@
     <string name="node_bank_melat">BankMelat</string>
     <string name="node_bank_saderat">BankSaderat</string>
     <string name="node_citizen">Citizen</string>
-    <string name="node_irancell">Irancell</string>
+    <string name="node_sabt_ahval">SabtAhval</string>
     <string name="node_telegram">Telegram</string>
     <string name="total_records_label">INDEXED RECORDS</string>
     <string name="lock_hud_button">LOCK HUD</string>
 
     <!-- Module Detail Screen -->
     <string name="btn_import_csv">IMPORT IDENTITY CSV DATABASE</string>
+    <string name="btn_import_mdf_ldf">IMPORT MDF / LDF DATABASE</string>
+    <string name="mdf_ldf_format_header">SQL SERVER MDF + LDF BINARY SPECIFICATION // SABTAHVAL</string>
+    <string name="empty_sabtahval_tip">Select IMPORT MDF / LDF DATABASE to load SQL Server (.mdf primary data pages and/or .ldf transaction log) files with multi-threaded CPU + GPU acceleration, or run a 100K binary MDF/LDF benchmark.</string>
     <string name="btn_generate_benchmark">BENCHMARK STREAM</string>
     <string name="btn_pause_import">PAUSE</string>
     <string name="btn_resume_import">RESUME</string>

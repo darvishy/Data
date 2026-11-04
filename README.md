@@ -65,10 +65,10 @@ Once a workflow run shows a green checkmark, you can download the compiled APK i
 
 ---
 
-## 🗂️ Supported HUD Modules & CSV Schemas
+## 🗂️ Supported HUD Modules & Database Schemas
 
 The main grid provides 6 dedicated HUD database nodes:
-`BankMeli` • `BankMelat` • `BankSaderat` • `Citizen` • `Irancell` • `Telegram`
+`BankMeli` • `BankMelat` • `BankSaderat` • `Citizen` • `SabtAhval` • `Telegram`
 
 - **BankMeli CSV Format (5 Columns):**
   `NATIONAL_CODE,CARD_NO,FULL_NAME,BIRTH_DATE,MOBILE`
@@ -78,5 +78,7 @@ The main grid provides 6 dedicated HUD database nodes:
   `AccountNumber,DefineationNumber,FullName,CardNumber,Password_Hint,user_email_address,Passw,user_phone_number,Member,Username,DefineNum_Old,ID_Branch`
 - **Citizen CSV Format (7 Columns):**
   `FULLNAME,BIRTHDAY,National ID,Postal Code,Phone,City,Address`
-- **Telegram CSV Format (5 Columns, Semicolon-Delimited):**
+- **SabtAhval SQL Server Database Format (`.mdf` + `.ldf`):**
+  Binary 8,192-byte SQL Server Primary Data Pages (`.mdf` / `.ndf`) and Transaction Log files (`.ldf` `LOP_INSERT_ROWS` / `LOP_FORMAT_PAGE`), extracting `NATIONAL_CODE`, `FULL_NAME`, `FATHER_NAME`, `SHENASNAME_NO`, `BIRTH_DATE`, `ISSUE_PLACE`, `SERIAL`, `POSTAL_CODE`, and `MOBILE`
+- **Telegram CSV Format (5 Columns, Semicolon-Delimited, `98` Phone Filter):**
   `account_id;phone;username;first_name;last_name`

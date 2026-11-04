@@ -215,6 +215,45 @@ fun IdentityRecordHudRow(
                     }
                 }
 
+                module == HudModule.SABT_AHVAL -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        RecordFieldChip(label = "NAT_CODE", value = record.nationalCode, color = HudCyan, modifier = Modifier.weight(1f))
+                        RecordFieldChip(label = "SHENASNAME", value = record.idNumber, color = HudAmber, modifier = Modifier.weight(1f))
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        RecordFieldChip(label = "FATHER", value = record.fatherName, color = accentColor, modifier = Modifier.weight(1f))
+                        RecordFieldChip(label = "BIRTH_DATE", value = record.birthDate, color = HudLime, modifier = Modifier.weight(1f))
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        val issueLoc = if (record.province != "-") "${record.city} / ${record.province}" else record.city
+                        val serialOrTel = if (record.accountOrHandle != "-") record.accountOrHandle else record.phone
+                        RecordFieldChip(label = "ISSUE_LOC", value = issueLoc, color = HudCyan, modifier = Modifier.weight(1f))
+                        RecordFieldChip(
+                            label = if (record.accountOrHandle != "-") "SERIAL" else "MOBILE",
+                            value = serialOrTel,
+                            color = HudMagenta,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    if (record.address != "-") {
+                        RecordFieldChip(
+                            label = "ADDRESS",
+                            value = record.address,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+
                 module == HudModule.BANK_MELAT || record.fatherName != "-" -> {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -755,11 +794,18 @@ fun buildRecordDetailFields(
             addIfPresent("PHONE", record.phone, HudLime)
             addIfPresent("USERNAME", record.username, module.primaryColor)
         }
-        HudModule.IRANCELL -> {
+        HudModule.SABT_AHVAL -> {
             addIfPresent("NATIONAL CODE", record.nationalCode, HudCyan)
-            addIfPresent("MOBILE", record.phone, HudLime)
-            addIfPresent("ACCOUNT / HANDLE", record.accountOrHandle, HudAmber)
-            addIfPresent("CITY", record.city, module.primaryColor)
+            addIfPresent("SHENASNAME NO", record.idNumber, HudAmber)
+            addIfPresent("FATHER NAME", record.fatherName, module.primaryColor, rightAlignValue = true)
+            addIfPresent("BIRTH DATE", record.birthDate, HudLime)
+            addIfPresent("SERIAL / SERIES", record.accountOrHandle, HudMagenta)
+            val issueLoc = combineLocation(record.city, record.province)
+            val birthLoc = combineLocation(record.birthCity, record.birthProvince)
+            addIfPresent("ISSUE PLACE / CITY", issueLoc, HudCyan)
+            addIfPresent("BIRTH LOCATION", birthLoc, HudAmber)
+            addIfPresent("POSTAL CODE", record.postalCode, HudMagenta)
+            addIfPresent("MOBILE / PHONE", record.phone, HudLime)
             addIfPresent("ADDRESS", record.address, HudTextPrimary, rightAlignValue = true)
         }
     }

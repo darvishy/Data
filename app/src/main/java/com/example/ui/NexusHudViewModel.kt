@@ -234,6 +234,11 @@ class NexusHudViewModel(application: Application) : AndroidViewModel(application
         importEngine.importCsvFromUri(module.id, uri)
     }
 
+    fun startMdfLdfImportFromUris(uris: List<Uri>) {
+        val module = _uiState.value.selectedModule ?: return
+        importEngine.importMdfLdfFromUris(module.id, uris)
+    }
+
     fun startSyntheticBenchmarkStream(recordCount: Int = 100_000) {
         val module = _uiState.value.selectedModule ?: return
         importEngine.runHighSpeedCsvStreamBenchmark(module.id, recordCount)
