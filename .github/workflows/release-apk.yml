@@ -1,0 +1,95 @@
+name: Build and Release APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+    tags: [ "v*" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.1.0'
+
+      - name: Decode debug keystore if present
+        run: |
+          if [ -f "debug.keystore.base64" ] && [ ! -f "debug.keystore" ]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+          elif [ ! -f "debug.keystore" ]; then
+            keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: Generate Release Keystore (or use GitHub Secrets if configured)
+        env:
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+          STORE_PASSWORD_SECRET: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD_SECRET: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -n "$SIGNING_KEYSTORE_BASE64" ]; then
+            echo "$SIGNING_KEYSTORE_BASE64" | base64 -d > "${GITHUB_WORKSPACE}/my-upload-key.jks"
+            echo "KEYSTORE_PATH=${GITHUB_WORKSPACE}/my-upload-key.jks" >> $GITHUB_ENV
+            echo "STORE_PASSWORD=${STORE_PASSWORD_SECRET}" >> $GITHUB_ENV
+            echo "KEY_PASSWORD=${KEY_PASSWORD_SECRET}" >> $GITHUB_ENV
+          else
+            keytool -genkey -v \
+              -keystore "${GITHUB_WORKSPACE}/my-upload-key.jks" \
+              -storepass "nexushud_release_2026" \
+              -alias "upload" \
+              -keypass "nexushud_release_2026" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Nullemperor,OU=NexusHUD,O=Nullemperor,C=US"
+            echo "KEYSTORE_PATH=${GITHUB_WORKSPACE}/my-upload-key.jks" >> $GITHUB_ENV
+            echo "STORE_PASSWORD=nexushud_release_2026" >> $GITHUB_ENV
+            echo "KEY_PASSWORD=nexushud_release_2026" >> $GITHUB_ENV
+          fi
+
+      - name: Build Signed Release & Debug APKs
+        run: gradle assembleRelease assembleDebug --no-daemon
+
+      - name: Prepare APK Artifacts
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/*.apk dist/NexusHUD-v1.0-release.apk
+          cp app/build/outputs/apk/debug/*.apk dist/NexusHUD-v1.0-debug.apk
+
+      - name: Upload APK Workflow Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: NexusHUD-APKs
+          path: dist/*.apk
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v1.0.{0}', github.run_number) }}
+          name: "Nexus HUD Release (${{ github.ref_type == 'tag' && github.ref_name || format('v1.0.{0}', github.run_number) }})"
+          body: |
+            ## Nexus HUD — Multi-Spectrum Identity Telemetry Console
+            - **Signed Release APK**: `NexusHUD-v1.0-release.apk`
+            - **Debug APK**: `NexusHUD-v1.0-debug.apk`
+            - **Features**: Biometric Fingerprint + Master Cipher Lock, 8 HUD Modules (including 13-col BankMelat & 7-col Citizen schemas), Multi-Threaded CPU + OpenGL ES GPU CSV Importer with Pause/Resume, and Visible FTS4 Million-Row Search.
+            - Developed by **Nullemperor** (`http://t.me/Nullemperor`).
+          files: |
+            dist/NexusHUD-v1.0-release.apk
+            dist/NexusHUD-v1.0-debug.apk
+          draft: false
+          prerelease: false
