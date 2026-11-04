@@ -149,7 +149,24 @@ class ExampleUnitTest {
             assertEquals("989123456789", parsed.phone)
             assertEquals("@nullemperor_dev", parsed.username)
             assertEquals("Aria Parsa", parsed.fullName)
+            assertTrue(CsvSchemaParser.passesModuleImportFilter("telegram", parsed))
         }
+
+        val foreignRow = CsvSchemaParser.parseIdentityCsvRow(
+            "telegram",
+            "784512999;14155552671;foreign_user;John;Doe",
+            headers,
+            1
+        )
+        assertTrue(!CsvSchemaParser.passesModuleImportFilter("telegram", foreignRow))
+
+        val emptyPhoneRow = CsvSchemaParser.parseIdentityCsvRow(
+            "telegram",
+            "784513000;;no_phone_user;Sara;Rad",
+            headers,
+            2
+        )
+        assertTrue(!CsvSchemaParser.passesModuleImportFilter("telegram", emptyPhoneRow))
     }
 
     @Test

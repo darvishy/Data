@@ -103,7 +103,7 @@ enum class HudModule(
             IRANCELL ->
                 "FULL_NAME, NATIONAL_CODE, MOBILE, ACCOUNT_HANDLE, CITY, ADDRESS"
             TELEGRAM ->
-                "account_id;phone;username;first_name;last_name"
+                "account_id;phone;username;first_name;last_name  [FILTER: phone starts with 98]"
         }
 
     companion object {

@@ -238,6 +238,19 @@ object CsvSchemaParser {
         )
     }
 
+    /**
+     * Module-specific import filter:
+     * In the Telegram section (`telegram`), only import records whose `phone` field starts with `98`
+     * in its first 2 digits (after normalizing Persian/Arabic digits and stripping any leading `+` or quotes).
+     */
+    fun passesModuleImportFilter(moduleId: String, row: ParsedCsvIdentityRow): Boolean {
+        if (moduleId != "telegram") return true
+        val normalizedPhone = TextNormalizer.normalizeForSearch(row.phone)
+            .trim()
+            .trimStart('+', '"', '\'')
+        return normalizedPhone.startsWith("98")
+    }
+
     private fun parseBankMeliPositional(cols: List<String>, index: Int): ParsedCsvIdentityRow {
         // (0:NATIONAL_CODE, 1:CARD_NO, 2:FULL_NAME, 3:BIRTH_DATE, 4:MOBILE)
         val nationalCode = cols.colOrDash(0)
@@ -1040,14 +1053,15 @@ class HighSpeedCsvImportEngine(
                 if (from >= to) return@async emptyList<ParsedCsvIdentityRow>()
                 val parsed = ArrayList<ParsedCsvIdentityRow>(to - from)
                 for (i in from until to) {
-                    parsed.add(
-                        CsvSchemaParser.parseIdentityCsvRow(
-                            moduleId = moduleId,
-                            rawLine = lines[i],
-                            headers = headerColumns,
-                            index = i
-                        )
+                    val candidate = CsvSchemaParser.parseIdentityCsvRow(
+                        moduleId = moduleId,
+                        rawLine = lines[i],
+                        headers = headerColumns,
+                        index = i
                     )
+                    if (CsvSchemaParser.passesModuleImportFilter(moduleId, candidate)) {
+                        parsed.add(candidate)
+                    }
                 }
                 parsed
             }
@@ -1055,6 +1069,7 @@ class HighSpeedCsvImportEngine(
 
         val gpuResult = gpuDeferred.await()
         val parsedRows = parsedSlicesDeferred.awaitAll().flatten()
+        val filteredOutInBatch = (lines.size - parsedRows.size).coerceAtLeast(0)
 
         val entities = ArrayList<IdentityEntity>(parsedRows.size)
         for (i in parsedRows.indices) {
@@ -1064,12 +1079,15 @@ class HighSpeedCsvImportEngine(
             } else {
                 0L
             }
+            val cleanedPhone = TextNormalizer.normalizeForSearch(row.phone)
+                .let { if (moduleId == "telegram") it.trimStart('+') else it }
+                .ifEmpty { "-" }
             entities.add(
                 IdentityEntity(
                     moduleId = moduleId,
                     fullName = TextNormalizer.normalizeForSearch(row.fullName).ifEmpty { row.fullName },
                     nationalCode = TextNormalizer.normalizeForSearch(row.nationalCode).ifEmpty { "-" },
-                    phone = TextNormalizer.normalizeForSearch(row.phone).ifEmpty { "-" },
+                    phone = cleanedPhone,
                     accountOrHandle = TextNormalizer.normalizeForSearch(row.accountOrHandle).ifEmpty { "-" },
                     cardNumber = TextNormalizer.normalizeForSearch(row.cardNumber).ifEmpty { "-" },
                     fatherName = TextNormalizer.normalizeForSearch(row.fatherName).ifEmpty { "-" },
@@ -1095,7 +1113,9 @@ class HighSpeedCsvImportEngine(
             )
         }
 
-        database.identityDao().insertBatch(entities)
+        if (entities.isNotEmpty()) {
+            database.identityDao().insertBatch(entities)
+        }
 
         val currentTotal = processedRows.addAndGet(entities.size.toLong())
         val safeElapsedMs = activeElapsedMs.coerceAtLeast(1L)
@@ -1118,6 +1138,11 @@ class HighSpeedCsvImportEngine(
 
         val simulatedDynamicCpuLoad = (72 + (batchIndex * 7) % 26).coerceIn(65, 99)
         val simulatedDynamicGpuLoad = (58 + (batchIndex * 11) % 36).coerceIn(50, 96)
+        val filterNote = if (moduleId == "telegram" && filteredOutInBatch > 0) {
+            " | SKIPPED $filteredOutInBatch NON-98 ROWS"
+        } else {
+            ""
+        }
 
         _state.update {
             if (it.status == ImportStatus.PAUSED) it
@@ -1134,7 +1159,7 @@ class HighSpeedCsvImportEngine(
                 gpuHardwareActive = gpuResult.hardwareActive,
                 gpuLoadPercent = simulatedDynamicGpuLoad,
                 activeBatchIndex = batchIndex,
-                statusLog = "BATCH #$batchIndex COMMITTED // CPU ${cpuThreadCount}T @ ${simulatedDynamicCpuLoad}% | GPU SHADER ${gpuResult.computeMicros}µs"
+                statusLog = "BATCH #$batchIndex COMMITTED // CPU ${cpuThreadCount}T @ ${simulatedDynamicCpuLoad}% | GPU SHADER ${gpuResult.computeMicros}µs$filterNote"
             )
         }
     }
