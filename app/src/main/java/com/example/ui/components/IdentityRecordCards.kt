@@ -87,6 +87,7 @@ fun IdentityRecordHudRow(
     record: IdentityEntity,
     module: HudModule,
     accentColor: Color,
+    showDatabaseBadge: Boolean = false,
     onClick: (IdentityEntity) -> Unit
 ) {
     val shape = CutCornerShape(topStart = 10.dp, bottomEnd = 10.dp)
@@ -114,8 +115,22 @@ fun IdentityRecordHudRow(
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
+                        if (showDatabaseBadge) {
+                            Surface(
+                                shape = CutCornerShape(topStart = 4.dp, bottomEnd = 4.dp),
+                                color = module.primaryColor.copy(alpha = 0.18f),
+                                border = BorderStroke(0.8.dp, module.primaryColor.copy(alpha = 0.55f))
+                            ) {
+                                Text(
+                                    text = module.displayLabel.uppercase(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = module.primaryColor,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
                         Icon(
                             imageVector = Icons.Filled.OpenInFull,
                             contentDescription = stringResource(R.string.record_card_tap_hint),
@@ -212,45 +227,6 @@ fun IdentityRecordHudRow(
                     ) {
                         RecordFieldChip(label = "PASSW", value = record.passwValue, color = HudAmber, modifier = Modifier.weight(1f))
                         RecordFieldChip(label = "HINT", value = record.passwordHint, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
-                    }
-                }
-
-                module == HudModule.SABT_AHVAL -> {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        RecordFieldChip(label = "NAT_CODE", value = record.nationalCode, color = HudCyan, modifier = Modifier.weight(1f))
-                        RecordFieldChip(label = "SHENASNAME", value = record.idNumber, color = HudAmber, modifier = Modifier.weight(1f))
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        RecordFieldChip(label = "FATHER", value = record.fatherName, color = accentColor, modifier = Modifier.weight(1f))
-                        RecordFieldChip(label = "BIRTH_DATE", value = record.birthDate, color = HudLime, modifier = Modifier.weight(1f))
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        val issueLoc = if (record.province != "-") "${record.city} / ${record.province}" else record.city
-                        val serialOrTel = if (record.accountOrHandle != "-") record.accountOrHandle else record.phone
-                        RecordFieldChip(label = "ISSUE_LOC", value = issueLoc, color = HudCyan, modifier = Modifier.weight(1f))
-                        RecordFieldChip(
-                            label = if (record.accountOrHandle != "-") "SERIAL" else "MOBILE",
-                            value = serialOrTel,
-                            color = HudMagenta,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    if (record.address != "-") {
-                        RecordFieldChip(
-                            label = "ADDRESS",
-                            value = record.address,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.fillMaxWidth()
-                        )
                     }
                 }
 
@@ -404,7 +380,8 @@ private fun RecordFieldChip(
 fun IdentityRecordDetailCardDialog(
     record: IdentityEntity,
     module: HudModule,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onOpenModule: ((HudModule) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val shareChooserTitle = stringResource(R.string.share_chooser_title)
@@ -666,6 +643,34 @@ fun IdentityRecordDetailCardDialog(
                         )
                     }
                 }
+
+                if (onOpenModule != null) {
+                    OutlinedButton(
+                        onClick = {
+                            onDismiss()
+                            onOpenModule(module)
+                        },
+                        shape = CutCornerShape(topStart = 8.dp, bottomEnd = 8.dp),
+                        border = BorderStroke(1.dp, module.primaryColor.copy(alpha = 0.7f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(46.dp)
+                            .testTag("jump_to_module_button")
+                    ) {
+                        Icon(
+                            imageVector = module.icon,
+                            contentDescription = null,
+                            tint = module.primaryColor,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = stringResource(R.string.btn_jump_to_module, module.displayLabel.uppercase()),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = module.primaryColor
+                        )
+                    }
+                }
             }
         }
     }
@@ -794,18 +799,11 @@ fun buildRecordDetailFields(
             addIfPresent("PHONE", record.phone, HudLime)
             addIfPresent("USERNAME", record.username, module.primaryColor)
         }
-        HudModule.SABT_AHVAL -> {
+        HudModule.IRANCELL -> {
             addIfPresent("NATIONAL CODE", record.nationalCode, HudCyan)
-            addIfPresent("SHENASNAME NO", record.idNumber, HudAmber)
-            addIfPresent("FATHER NAME", record.fatherName, module.primaryColor, rightAlignValue = true)
-            addIfPresent("BIRTH DATE", record.birthDate, HudLime)
-            addIfPresent("SERIAL / SERIES", record.accountOrHandle, HudMagenta)
-            val issueLoc = combineLocation(record.city, record.province)
-            val birthLoc = combineLocation(record.birthCity, record.birthProvince)
-            addIfPresent("ISSUE PLACE / CITY", issueLoc, HudCyan)
-            addIfPresent("BIRTH LOCATION", birthLoc, HudAmber)
-            addIfPresent("POSTAL CODE", record.postalCode, HudMagenta)
-            addIfPresent("MOBILE / PHONE", record.phone, HudLime)
+            addIfPresent("MOBILE", record.phone, HudLime)
+            addIfPresent("ACCOUNT / HANDLE", record.accountOrHandle, HudAmber)
+            addIfPresent("CITY", record.city, module.primaryColor)
             addIfPresent("ADDRESS", record.address, HudTextPrimary, rightAlignValue = true)
         }
     }

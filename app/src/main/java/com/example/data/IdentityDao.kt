@@ -96,6 +96,59 @@ interface IdentityDao {
         limit: Int = 150
     ): List<IdentityEntity>
 
+    @Query(
+        """
+        SELECT * FROM identity_records
+        WHERE rowid IN (
+            SELECT rowid FROM identity_records_fts
+            WHERE identity_records_fts MATCH :ftsQuery
+        )
+        LIMIT :limit
+        """
+    )
+    suspend fun searchFtsUniversal(
+        ftsQuery: String,
+        limit: Int = 150
+    ): List<IdentityEntity>
+
+    @Query(
+        """
+        SELECT * FROM identity_records
+        WHERE nationalCode = :exactQuery
+           OR phone = :exactQuery
+           OR accountOrHandle = :exactQuery
+           OR cardNumber = :exactQuery
+           OR username = :exactQuery
+           OR username = :atExactQuery
+        LIMIT :limit
+        """
+    )
+    suspend fun searchExactIndexedUniversal(
+        exactQuery: String,
+        atExactQuery: String = "@$exactQuery",
+        limit: Int = 150
+    ): List<IdentityEntity>
+
+    @Query(
+        """
+        SELECT * FROM identity_records
+        WHERE (nationalCode >= :prefix AND nationalCode < :prefixUpper)
+           OR (phone >= :prefix AND phone < :prefixUpper)
+           OR (accountOrHandle >= :prefix AND accountOrHandle < :prefixUpper)
+           OR (cardNumber >= :prefix AND cardNumber < :prefixUpper)
+           OR (username >= :prefix AND username < :prefixUpper)
+           OR (username >= :atPrefix AND username < :atPrefixUpper)
+        LIMIT :limit
+        """
+    )
+    suspend fun searchPrefixIndexedUniversal(
+        prefix: String,
+        prefixUpper: String = prefix + "\uFFFF",
+        atPrefix: String = "@$prefix",
+        atPrefixUpper: String = "@$prefix\uFFFF",
+        limit: Int = 150
+    ): List<IdentityEntity>
+
     @RawQuery
     suspend fun searchMultiTokenFallback(query: SupportSQLiteQuery): List<IdentityEntity>
 

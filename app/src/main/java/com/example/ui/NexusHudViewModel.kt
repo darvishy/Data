@@ -73,7 +73,14 @@ class NexusHudViewModel(application: Application) : AndroidViewModel(application
     private val _searchTelemetry = MutableStateFlow(SearchTelemetry())
     val searchTelemetry: StateFlow<SearchTelemetry> = _searchTelemetry.asStateFlow()
 
+    private val _universalSearchTelemetry = MutableStateFlow(SearchTelemetry())
+    val universalSearchTelemetry: StateFlow<SearchTelemetry> = _universalSearchTelemetry.asStateFlow()
+
+    private val _universalModuleFilter = MutableStateFlow<String?>(null)
+    val universalModuleFilter: StateFlow<String?> = _universalModuleFilter.asStateFlow()
+
     private var searchJob: Job? = null
+    private var universalSearchJob: Job? = null
     private var unlockedInSession: Boolean = false
 
     init {
@@ -229,14 +236,44 @@ class NexusHudViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun updateUniversalSearchQuery(
+        query: String,
+        moduleId: String? = _universalModuleFilter.value
+    ) {
+        _universalSearchTelemetry.update { it.copy(query = query, isSearching = query.isNotBlank()) }
+        universalSearchJob?.cancel()
+        universalSearchJob = viewModelScope.launch {
+            if (query.isNotBlank()) {
+                delay(45L)
+            }
+            val totalAll = moduleCounts.value.values.sum()
+            identityRepository.executeUniversalSearch(
+                rawQuery = query,
+                targetModuleId = moduleId,
+                totalRecordsAcrossAll = totalAll,
+                onStageUpdate = { telemetry ->
+                    _universalSearchTelemetry.value = telemetry
+                }
+            )
+        }
+    }
+
+    fun setUniversalModuleFilter(moduleId: String?) {
+        _universalModuleFilter.value = moduleId
+        val currentQuery = _universalSearchTelemetry.value.query
+        if (currentQuery.isNotBlank()) {
+            updateUniversalSearchQuery(currentQuery, moduleId)
+        }
+    }
+
+    fun clearUniversalSearch() {
+        universalSearchJob?.cancel()
+        _universalSearchTelemetry.value = SearchTelemetry()
+    }
+
     fun startCsvImportFromUri(uri: Uri) {
         val module = _uiState.value.selectedModule ?: return
         importEngine.importCsvFromUri(module.id, uri)
-    }
-
-    fun startMdfLdfImportFromUris(uris: List<Uri>) {
-        val module = _uiState.value.selectedModule ?: return
-        importEngine.importMdfLdfFromUris(module.id, uris)
     }
 
     fun startSyntheticBenchmarkStream(recordCount: Int = 100_000) {

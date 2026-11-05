@@ -55,7 +55,7 @@ class ExampleRobolectricTest {
             "BankMelat",
             "BankSaderat",
             "Citizen",
-            "SabtAhval",
+            "Irancell",
             "Telegram"
         )
         assertEquals(expectedLabels, HudModule.entries.map { context.getString(it.labelRes) })
@@ -110,6 +110,36 @@ class ExampleRobolectricTest {
                 }
             }
             assertEquals(1L, tgHits)
+
+            // Test Universal Multi-Database Search across all nodes
+            var universalHits = 0L
+            var returnedModules = emptyList<String>()
+            repo.executeUniversalSearch("علی") { telemetry ->
+                if (telemetry.stage == SearchStage.COMPLETE) {
+                    universalHits = telemetry.matchCount
+                    returnedModules = telemetry.results.map { it.moduleId }
+                }
+            }
+            assertEquals(1L, universalHits)
+            assertTrue(returnedModules.contains("bank_meli"))
+
+            // Test Universal Multi-Database Search for phone prefix across all nodes
+            var phoneHits = 0L
+            repo.executeUniversalSearch("0912") { telemetry ->
+                if (telemetry.stage == SearchStage.COMPLETE) {
+                    phoneHits = telemetry.matchCount
+                }
+            }
+            assertTrue(phoneHits >= 1L)
+
+            // Test Universal Filter targeted to Telegram node
+            var filteredHits = 0L
+            repo.executeUniversalSearch(rawQuery = "Aria", targetModuleId = "telegram") { telemetry ->
+                if (telemetry.stage == SearchStage.COMPLETE) {
+                    filteredHits = telemetry.matchCount
+                }
+            }
+            assertEquals(1L, filteredHits)
         } finally {
             db.close()
         }

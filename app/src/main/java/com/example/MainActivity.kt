@@ -53,6 +53,8 @@ fun NexusHudApp(
     val importState by viewModel.importState.collectAsStateWithLifecycle()
     val moduleCounts by viewModel.moduleCounts.collectAsStateWithLifecycle()
     val searchTelemetry by viewModel.searchTelemetry.collectAsStateWithLifecycle()
+    val universalSearchTelemetry by viewModel.universalSearchTelemetry.collectAsStateWithLifecycle()
+    val universalModuleFilter by viewModel.universalModuleFilter.collectAsStateWithLifecycle()
 
     Crossfade(
         targetState = uiState.authState,
@@ -110,6 +112,11 @@ fun NexusHudApp(
                 if (activeModule == null) {
                     HudGridHomeScreen(
                         moduleCounts = moduleCounts,
+                        searchTelemetry = universalSearchTelemetry,
+                        selectedFilterModuleId = universalModuleFilter,
+                        onSearchQueryChange = viewModel::updateUniversalSearchQuery,
+                        onFilterModuleChange = viewModel::setUniversalModuleFilter,
+                        onClearSearch = viewModel::clearUniversalSearch,
                         onSelectModule = viewModel::openModule,
                         onLockHud = viewModel::lockHud
                     )
@@ -121,7 +128,6 @@ fun NexusHudApp(
                         searchTelemetry = searchTelemetry,
                         onBack = viewModel::closeModuleToGrid,
                         onImportCsvUri = viewModel::startCsvImportFromUri,
-                        onImportMdfLdfUris = viewModel::startMdfLdfImportFromUris,
                         onRunBenchmarkStream = viewModel::startSyntheticBenchmarkStream,
                         onPauseImport = viewModel::pauseCsvImport,
                         onResumeImport = viewModel::resumeCsvImport,

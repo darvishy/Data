@@ -31,16 +31,13 @@
     <string name="node_bank_melat">BankMelat</string>
     <string name="node_bank_saderat">BankSaderat</string>
     <string name="node_citizen">Citizen</string>
-    <string name="node_sabt_ahval">SabtAhval</string>
+    <string name="node_irancell">Irancell</string>
     <string name="node_telegram">Telegram</string>
     <string name="total_records_label">INDEXED RECORDS</string>
     <string name="lock_hud_button">LOCK HUD</string>
 
     <!-- Module Detail Screen -->
     <string name="btn_import_csv">IMPORT IDENTITY CSV DATABASE</string>
-    <string name="btn_import_mdf_ldf">IMPORT MDF / LDF DATABASE</string>
-    <string name="mdf_ldf_format_header">SQL SERVER MDF + LDF BINARY SPECIFICATION // SABTAHVAL</string>
-    <string name="empty_sabtahval_tip">Select IMPORT MDF / LDF DATABASE to load SQL Server (.mdf primary data pages and/or .ldf transaction log) files with multi-threaded CPU + GPU acceleration, or run a 100K binary MDF/LDF benchmark.</string>
     <string name="btn_generate_benchmark">BENCHMARK STREAM</string>
     <string name="btn_pause_import">PAUSE</string>
     <string name="btn_resume_import">RESUME</string>
@@ -63,4 +60,15 @@
     <string name="msg_info_copied_clipboard">INFORMATION COPIED TO CLIPBOARD</string>
     <string name="msg_field_copied_prefix">COPIED:</string>
     <string name="share_chooser_title">Share Identity Information</string>
+
+    <!-- Universal Multi-Database Search -->
+    <string name="universal_search_title">UNIVERSAL MULTI-DATABASE SEARCH</string>
+    <string name="universal_search_placeholder">Universal search: National ID, mobile, card, handle, name across all databases…</string>
+    <string name="universal_filter_all">ALL DATABASES</string>
+    <string name="universal_search_results_title">UNIVERSAL SEARCH RESULTS</string>
+    <string name="btn_return_to_grid">RETURN TO DATABASE GRID</string>
+    <string name="universal_empty_title">ZERO RECORDS MATCHED ACROSS DATABASES</string>
+    <string name="universal_empty_tip">Try searching with national code, mobile phone (e.g. 0912 or 98), card number, username, or full name.</string>
+    <string name="btn_jump_to_module">OPEN IN %1$s DATABASE</string>
+    <string name="databases_grid_header">DATABASE NODES // 6 SECTORS READY</string>
 </resources>

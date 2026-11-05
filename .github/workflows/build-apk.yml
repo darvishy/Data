@@ -152,7 +152,7 @@ jobs:
           - **Commit SHA:** \`${GITHUB_SHA}\`
 
           #### Included Optimizations & Fixes
-          - Replaced \`Irancell\` with \`SabtAhval\` featuring a multi-threaded binary SQL Server \`.mdf\` (8KB Data Pages) & \`.ldf\` (Transaction Log) database import engine
+          - Universal Multi-Database Fast Search in Main Screen across all databases (BankMeli, BankMelat, BankSaderat, Citizen, Irancell, Telegram) with instant filter chips and real-time telemetry
           - Right-aligned Names on result information cards and interactive tap-to-open Information Card with Share & Copy support
           - Crash-proof bounded CSV reader & zero-allocation \`98\` phone prefix pre-filter for large Telegram databases
           - Pre-compiled CSV header mapping, 2,500-row SQLite WAL batching, and reusable native OpenGL ES buffers

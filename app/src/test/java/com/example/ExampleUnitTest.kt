@@ -11,17 +11,16 @@ import org.junit.Test
 class ExampleUnitTest {
 
     @Test
-    fun `verify 6 HUD modules have clean unnumbered names with SabtAhval replacing Irancell`() {
+    fun `verify 6 HUD modules have clean unnumbered names without BankSepah or BankTejarat`() {
         val expected = listOf(
             "BankMeli",
             "BankMelat",
             "BankSaderat",
             "Citizen",
-            "SabtAhval",
+            "Irancell",
             "Telegram"
         )
         assertEquals(expected, HudModule.entries.map { it.displayLabel })
-        assertTrue(HudModule.SABT_AHVAL.usesMdfLdfEngine)
     }
 
     @Test
@@ -240,104 +239,27 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun `verify SabtAhval binary MDF 8KB pages and LDF transaction log parser with deduplication`() {
-        val sampleMdfRows = listOf(
-            com.example.engine.MdfLdfDatabaseParser.BinaryPageSynthesizer.SyntheticSabtRow(
-                nationalCode10 = "0019283746",
-                shenasnameNo = 45821,
-                firstName = "علی",
-                lastName = "رضایی",
-                fatherName = "داریوش",
-                birthDate = "1368/04/15",
-                city = "تهران",
-                province = "تهران",
-                serial = "الف/12-654321",
-                postalCode = "1415567890",
-                mobile = "09121112233"
-            ),
-            com.example.engine.MdfLdfDatabaseParser.BinaryPageSynthesizer.SyntheticSabtRow(
-                nationalCode10 = "0078451296",
-                shenasnameNo = 12094,
-                firstName = "سارا",
-                lastName = "شیرازی",
-                fatherName = "بهرام",
-                birthDate = "1374/09/21",
-                city = "شیراز",
-                province = "فارس",
-                serial = "ب/34-987654",
-                postalCode = "7134567890",
-                mobile = "09354445566"
-            )
+    fun `verify universal search token normalization and multi-database module mapping`() {
+        // Test Persian phone normalization to digits and variants
+        val persianPhone = "۰۹۱۲۱۱۱۲۲۳۳"
+        val normalized = TextNormalizer.normalizeForSearch(persianPhone)
+        assertEquals("09121112233", normalized)
+
+        // Verify all 6 modules resolve correctly from module ID for universal search cards
+        val expectedModules = listOf(
+            "bank_meli" to HudModule.BANK_MELI,
+            "bank_melat" to HudModule.BANK_MELAT,
+            "bank_saderat" to HudModule.BANK_SADERAT,
+            "citizen" to HudModule.CITIZEN,
+            "irancell" to HudModule.IRANCELL,
+            "telegram" to HudModule.TELEGRAM
         )
-
-        // 1. Test UTF-16LE NVARCHAR binary 8,192-byte MDF page extraction
-        val mdfUtf16Bytes = com.example.engine.MdfLdfDatabaseParser.BinaryPageSynthesizer
-            .buildMdfPages(sampleMdfRows, useWindows1256Varchar = false)
-        assertEquals(8_192, mdfUtf16Bytes.size)
-        assertEquals(
-            com.example.engine.MdfLdfDatabaseParser.SqlFileKind.MDF_DATA_FILE,
-            com.example.engine.MdfLdfDatabaseParser.detectFileKind("SabtAhval.mdf", mdfUtf16Bytes, mdfUtf16Bytes.size)
-        )
-
-        val parsedMdf = com.example.engine.MdfLdfDatabaseParser.parseMdfDataPage(mdfUtf16Bytes, 0, 0)
-        assertEquals(2, parsedMdf.size)
-        assertEquals("0019283746", parsedMdf[0].nationalCode)
-        assertEquals("45821", parsedMdf[0].idNumber)
-        assertEquals("علی رضایی", parsedMdf[0].fullName)
-        assertEquals("داریوش", parsedMdf[0].fatherName)
-        assertEquals("1368/04/15", parsedMdf[0].birthDate)
-        assertEquals("تهران", parsedMdf[0].city)
-        assertEquals("الف/12-654321", parsedMdf[0].accountOrHandle)
-        assertEquals("1415567890", parsedMdf[0].postalCode)
-        assertEquals("09121112233", parsedMdf[0].phone)
-
-        // 2. Test Windows-1256 Persian VARCHAR binary 8,192-byte MDF page extraction
-        val mdfWin1256Bytes = com.example.engine.MdfLdfDatabaseParser.BinaryPageSynthesizer
-            .buildMdfPages(sampleMdfRows, useWindows1256Varchar = true)
-        val parsedWin1256 = com.example.engine.MdfLdfDatabaseParser.parseMdfDataPage(mdfWin1256Bytes, 0, 0)
-        assertEquals(2, parsedWin1256.size)
-        assertEquals("سارا شیرازی", parsedWin1256[1].fullName)
-        assertEquals("بهرام", parsedWin1256[1].fatherName)
-        assertEquals("0078451296", parsedWin1256[1].nationalCode)
-
-        // 3. Test binary .ldf Transaction Log LOP_INSERT_ROWS extraction + MDF/LDF deduplication
-        val newLogOnlyRow = com.example.engine.MdfLdfDatabaseParser.BinaryPageSynthesizer.SyntheticSabtRow(
-            nationalCode10 = "0099112233",
-            shenasnameNo = 88776,
-            firstName = "کیان",
-            lastName = "راد",
-            fatherName = "فرهاد",
-            birthDate = "1379/02/10",
-            city = "اصفهان",
-            province = "اصفهان",
-            serial = "ج/56-112233",
-            postalCode = "8146512345",
-            mobile = "09132223344"
-        )
-        val ldfBytes = com.example.engine.MdfLdfDatabaseParser.BinaryPageSynthesizer
-            .buildLdfLogStream(listOf(sampleMdfRows[0], newLogOnlyRow))
-        assertEquals(
-            com.example.engine.MdfLdfDatabaseParser.SqlFileKind.LDF_LOG_FILE,
-            com.example.engine.MdfLdfDatabaseParser.detectFileKind("SabtAhval_log.ldf", ldfBytes, ldfBytes.size)
-        )
-
-        val (parsedLdf, _) = com.example.engine.MdfLdfDatabaseParser.scanLdfBufferChunk(
-            buf = ldfBytes,
-            validLen = ldfBytes.size,
-            isFinalChunk = true,
-            baseRowIndex = 0
-        )
-        assertEquals(2, parsedLdf.size)
-        assertEquals("کیان راد", parsedLdf[1].fullName)
-        assertEquals("0099112233", parsedLdf[1].nationalCode)
-
-        val dedup = com.example.engine.MdfLdfDatabaseParser.CompactRecordDeduplicator()
-        val combinedUnique = ArrayList<com.example.engine.ParsedCsvIdentityRow>()
-        for (r in parsedMdf + parsedLdf) {
-            if (dedup.markIfNew(r)) combinedUnique.add(r)
+        for ((id, expected) in expectedModules) {
+            assertEquals(expected, HudModule.fromId(id))
         }
-        // 2 rows in MDF + 2 rows in LDF (1 overlapping duplicate + 1 new log-only insert) => 3 unique records
-        assertEquals(3, combinedUnique.size)
+
+        // Test fallback for unknown ID
+        assertEquals(HudModule.BANK_MELI, HudModule.fromId("unknown_xyz"))
     }
 }
 
