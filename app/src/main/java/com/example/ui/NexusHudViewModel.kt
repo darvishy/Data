@@ -10,6 +10,8 @@ import com.example.data.SearchTelemetry
 import com.example.engine.HighSpeedCsvImportEngine
 import com.example.engine.ImportProgressState
 import com.example.engine.ImportStatus
+import com.example.engine.BackupProgressState
+import com.example.engine.NexusDatabaseBackupEngine
 import com.example.model.HudModule
 import com.example.security.SecurityPreferencesRepository
 import kotlinx.coroutines.Job
@@ -53,6 +55,13 @@ class NexusHudViewModel(application: Application) : AndroidViewModel(application
     val uiState: StateFlow<HudUiState> = _uiState.asStateFlow()
 
     val importState: StateFlow<ImportProgressState> = importEngine.state
+
+    private val backupEngine = NexusDatabaseBackupEngine(
+        context = application,
+        database = database,
+        externalScope = viewModelScope
+    )
+    val backupState: StateFlow<BackupProgressState> = backupEngine.state
 
     /**
      * Emits initial module counts immediately, then throttles subsequent Room invalidation
@@ -316,5 +325,25 @@ class NexusHudViewModel(application: Application) : AndroidViewModel(application
                 }
             )
         }
+    }
+
+    fun exportAllToBackup(uri: Uri) {
+        backupEngine.exportAllToBackup(uri)
+    }
+
+    fun fastImportFromBackup(uri: Uri, cleanRestore: Boolean = false) {
+        backupEngine.fastImportFromBackup(uri, cleanRestore)
+    }
+
+    fun cancelBackupOperation() {
+        backupEngine.cancelOperation()
+    }
+
+    fun dismissBackupCompleted() {
+        backupEngine.dismissCompleted()
+    }
+
+    fun getSuggestedBackupFileName(): String {
+        return NexusDatabaseBackupEngine.generateDefaultBackupFileName()
     }
 }

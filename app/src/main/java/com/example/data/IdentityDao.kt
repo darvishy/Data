@@ -155,6 +155,15 @@ interface IdentityDao {
     @Query("DELETE FROM identity_records WHERE moduleId = :moduleId")
     suspend fun clearModuleRecords(moduleId: String)
 
+    @Query("SELECT COUNT(*) FROM identity_records")
+    suspend fun getTotalRecordCount(): Long
+
+    @Query("SELECT * FROM identity_records WHERE rowid > :afterId ORDER BY rowid ASC LIMIT :limit")
+    suspend fun getRecordsPaged(afterId: Long, limit: Int): List<IdentityEntity>
+
+    @Query("DELETE FROM identity_records")
+    suspend fun clearAllRecords()
+
     @Query("INSERT INTO identity_records_fts(identity_records_fts) VALUES('rebuild')")
     suspend fun rebuildFtsIndex()
 

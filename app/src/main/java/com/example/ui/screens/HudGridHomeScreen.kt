@@ -29,21 +29,31 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CutCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.TravelExplore
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -73,6 +83,9 @@ import com.example.R
 import com.example.data.IdentityEntity
 import com.example.data.SearchStage
 import com.example.data.SearchTelemetry
+import com.example.engine.BackupOperationType
+import com.example.engine.BackupProgressState
+import com.example.engine.BackupStatus
 import com.example.model.HudModule
 import com.example.ui.components.DeveloperAttributionCard
 import com.example.ui.components.HudChamferedPanel
@@ -96,6 +109,12 @@ fun HudGridHomeScreen(
     moduleCounts: Map<String, Long>,
     searchTelemetry: SearchTelemetry,
     selectedFilterModuleId: String?,
+    backupState: BackupProgressState,
+    suggestedBackupFileName: String,
+    onExportBackup: (Uri) -> Unit,
+    onFastRestoreBackup: (Uri, Boolean) -> Unit,
+    onCancelBackupOperation: () -> Unit,
+    onDismissBackupCompleted: () -> Unit,
     onSearchQueryChange: (String) -> Unit,
     onFilterModuleChange: (String?) -> Unit,
     onClearSearch: () -> Unit,
@@ -106,7 +125,24 @@ fun HudGridHomeScreen(
     val cpuCores = Runtime.getRuntime().availableProcessors().coerceAtLeast(2)
 
     var selectedRecord by remember { mutableStateOf<IdentityEntity?>(null) }
+    var pendingRestoreUri by remember { mutableStateOf<Uri?>(null) }
     val isSearchActive = searchTelemetry.query.isNotBlank()
+
+    val exportBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri ->
+        if (uri != null) {
+            onExportBackup(uri)
+        }
+    }
+
+    val restoreBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            pendingRestoreUri = uri
+        }
+    }
 
     MulticolorHudBackdrop(accentPrimary = HudCyan, accentSecondary = HudMagenta) {
         BoxWithConstraints(
@@ -232,6 +268,22 @@ fun HudGridHomeScreen(
                     }
                 }
 
+                // Database Backup & Fast Restore Matrix
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    DatabaseBackupRestorePanel(
+                        backupState = backupState,
+                        totalIndexedRecords = totalRecords,
+                        onExportBackupClick = {
+                            exportBackupLauncher.launch(suggestedBackupFileName)
+                        },
+                        onRestoreBackupClick = {
+                            restoreBackupLauncher.launch(arrayOf("*/*"))
+                        },
+                        onAbortClick = onCancelBackupOperation,
+                        onDismissClick = onDismissBackupCompleted
+                    )
+                }
+
                 // Footer Developer Attribution
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     Column(
@@ -243,6 +295,18 @@ fun HudGridHomeScreen(
                     }
                 }
             }
+        }
+
+        // Fast Restore Mode Confirmation Dialog
+        pendingRestoreUri?.let { uri ->
+            FastRestoreConfirmationDialog(
+                uri = uri,
+                onConfirm = { cleanRestore ->
+                    onFastRestoreBackup(uri, cleanRestore)
+                    pendingRestoreUri = null
+                },
+                onDismiss = { pendingRestoreUri = null }
+            )
         }
 
         // Tap-to-open Record Information Card dialog with Copy, Share, and Jump to Database
@@ -854,4 +918,522 @@ private fun formatNum(value: Long): String {
         sb.append(raw[i])
     }
     return sb.toString()
+}
+
+@Composable
+fun DatabaseBackupRestorePanel(
+    backupState: BackupProgressState,
+    totalIndexedRecords: Long,
+    onExportBackupClick: () -> Unit,
+    onRestoreBackupClick: () -> Unit,
+    onAbortClick: () -> Unit,
+    onDismissClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    HudChamferedPanel(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("database_backup_restore_panel"),
+        primaryAccent = HudLime,
+        secondaryAccent = HudCyan
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Storage,
+                        contentDescription = null,
+                        tint = HudLime,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Column {
+                        Text(
+                            text = stringResource(R.string.backup_section_title),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = HudLime
+                        )
+                        Text(
+                            text = stringResource(R.string.backup_section_subtitle),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = HudTextSecondary,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+
+            MulticolorSpectrumBar(
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            // Progress / Status Display if Active, Completed, or Error
+            when (backupState.status) {
+                BackupStatus.RUNNING -> {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = HudBackgroundElevated,
+                        shape = CutCornerShape(topStart = 8.dp, bottomEnd = 8.dp),
+                        border = BorderStroke(1.dp, HudCyan)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                val opTitle = if (backupState.operation == BackupOperationType.EXPORT) {
+                                    "EXPORTING TO UNIFIED ARCHIVE // .NEXUSBAK"
+                                } else {
+                                    "FAST RESTORING DATABASE FROM ARCHIVE"
+                                }
+                                Text(
+                                    text = opTitle,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = HudCyan
+                                )
+                                OutlinedButton(
+                                    onClick = onAbortClick,
+                                    shape = CutCornerShape(topStart = 4.dp, bottomEnd = 4.dp),
+                                    border = BorderStroke(1.dp, HudAmber),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(28.dp).testTag("abort_backup_button")
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.btn_abort_backup),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = HudAmber
+                                    )
+                                }
+                            }
+
+                            LinearProgressIndicator(
+                                progress = { backupState.progressFraction },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                                    .clip(CutCornerShape(2.dp)),
+                                color = HudLime,
+                                trackColor = HudBackgroundDeep
+                            )
+
+                            // Telemetry Readouts
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column {
+                                    Text(
+                                        text = stringResource(R.string.backup_records_label),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = HudTextSecondary
+                                    )
+                                    Text(
+                                        text = "${NumberFormat.getNumberInstance(Locale.US).format(backupState.processedRecords)}" +
+                                            if (backupState.totalRecords > 0) " / ${NumberFormat.getNumberInstance(Locale.US).format(backupState.totalRecords)}" else "",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = HudLime
+                                    )
+                                }
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(
+                                        text = stringResource(R.string.backup_speed_label),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = HudTextSecondary
+                                    )
+                                    Text(
+                                        text = "${NumberFormat.getNumberInstance(Locale.US).format(backupState.recordsPerSecond)} REC/S",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = HudCyan
+                                    )
+                                }
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text(
+                                        text = stringResource(R.string.backup_elapsed_label),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = HudTextSecondary
+                                    )
+                                    Text(
+                                        text = "${backupState.activeElapsedMs / 1000}s",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = HudMagenta
+                                    )
+                                }
+                            }
+
+                            Text(
+                                text = "> ${backupState.statusLog}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = HudLime,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+
+                BackupStatus.COMPLETED -> {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = HudBackgroundElevated,
+                        shape = CutCornerShape(topStart = 8.dp, bottomEnd = 8.dp),
+                        border = BorderStroke(1.dp, HudLime)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.CheckCircle,
+                                    contentDescription = null,
+                                    tint = HudLime,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Column {
+                                    Text(
+                                        text = backupState.statusLog,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = HudLime
+                                    )
+                                    if (backupState.recordsPerSecond > 0) {
+                                        Text(
+                                            text = "AVERAGE THROUGHPUT: ${NumberFormat.getNumberInstance(Locale.US).format(backupState.recordsPerSecond)} REC/SEC",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = HudCyan
+                                        )
+                                    }
+                                }
+                            }
+                            OutlinedButton(
+                                onClick = onDismissClick,
+                                shape = CutCornerShape(topStart = 4.dp, bottomEnd = 4.dp),
+                                border = BorderStroke(1.dp, HudLime),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.btn_dismiss_backup),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = HudLime
+                                )
+                            }
+                        }
+                    }
+                }
+
+                BackupStatus.ERROR -> {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = HudBackgroundElevated,
+                        shape = CutCornerShape(topStart = 8.dp, bottomEnd = 8.dp),
+                        border = BorderStroke(1.dp, HudAmber)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Warning,
+                                    contentDescription = null,
+                                    tint = HudAmber,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Column {
+                                    Text(
+                                        text = backupState.statusLog,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = HudAmber
+                                    )
+                                    backupState.errorMessage?.let { err ->
+                                        Text(
+                                            text = err,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = HudTextSecondary
+                                        )
+                                    }
+                                }
+                            }
+                            OutlinedButton(
+                                onClick = onDismissClick,
+                                shape = CutCornerShape(topStart = 4.dp, bottomEnd = 4.dp),
+                                border = BorderStroke(1.dp, HudAmber),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.btn_dismiss_backup),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = HudAmber
+                                )
+                            }
+                        }
+                    }
+                }
+
+                BackupStatus.CANCELLED -> {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = HudBackgroundElevated,
+                        shape = CutCornerShape(topStart = 8.dp, bottomEnd = 8.dp),
+                        border = BorderStroke(1.dp, HudAmber)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = backupState.statusLog,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = HudAmber,
+                                modifier = Modifier.weight(1f)
+                            )
+                            OutlinedButton(
+                                onClick = onDismissClick,
+                                shape = CutCornerShape(topStart = 4.dp, bottomEnd = 4.dp),
+                                border = BorderStroke(1.dp, HudAmber),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.btn_dismiss_backup),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = HudAmber
+                                )
+                            }
+                        }
+                    }
+                }
+
+                BackupStatus.IDLE -> { /* Show standard action buttons */ }
+            }
+
+            // Dual Action Buttons: EXPORT ALL BACKUP & FAST RESTORE BACKUP
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Export Button
+                Button(
+                    onClick = onExportBackupClick,
+                    enabled = backupState.status != BackupStatus.RUNNING,
+                    shape = CutCornerShape(topStart = 8.dp, bottomEnd = 8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HudCyan.copy(alpha = 0.15f),
+                        contentColor = HudCyan
+                    ),
+                    border = BorderStroke(1.dp, HudCyan),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("export_all_backup_button")
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Save,
+                            contentDescription = null,
+                            tint = HudCyan,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Column(horizontalAlignment = Alignment.Start) {
+                            Text(
+                                text = stringResource(R.string.btn_export_all_backup),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = HudCyan
+                            )
+                            Text(
+                                text = "Export $totalIndexedRecords records to .nexusbak",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = HudTextSecondary
+                            )
+                        }
+                    }
+                }
+
+                // Restore Button
+                Button(
+                    onClick = onRestoreBackupClick,
+                    enabled = backupState.status != BackupStatus.RUNNING,
+                    shape = CutCornerShape(topStart = 8.dp, bottomEnd = 8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HudLime.copy(alpha = 0.15f),
+                        contentColor = HudLime
+                    ),
+                    border = BorderStroke(1.dp, HudLime),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("fast_restore_backup_button")
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Storage,
+                            contentDescription = null,
+                            tint = HudLime,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Column(horizontalAlignment = Alignment.Start) {
+                            Text(
+                                text = stringResource(R.string.btn_fast_restore_backup),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = HudLime
+                            )
+                            Text(
+                                text = "High-speed WAL stream into Room",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = HudTextSecondary
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun FastRestoreConfirmationDialog(
+    uri: Uri,
+    onConfirm: (cleanRestore: Boolean) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Storage,
+                    contentDescription = null,
+                    tint = HudLime
+                )
+                Text(
+                    text = stringResource(R.string.restore_dialog_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = HudLime
+                )
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = stringResource(R.string.restore_dialog_message),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White
+                )
+                Surface(
+                    color = HudBackgroundElevated,
+                    shape = CutCornerShape(4.dp),
+                    border = BorderStroke(1.dp, HudCyan.copy(alpha = 0.5f))
+                ) {
+                    Text(
+                        text = "TARGET FILE: ${uri.lastPathSegment ?: uri.path ?: "Selected Archive"}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = HudCyan,
+                        modifier = Modifier.padding(8.dp)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = { onConfirm(true) },
+                    shape = CutCornerShape(topStart = 6.dp, bottomEnd = 6.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HudAmber.copy(alpha = 0.2f),
+                        contentColor = HudAmber
+                    ),
+                    border = BorderStroke(1.dp, HudAmber),
+                    modifier = Modifier.fillMaxWidth().testTag("clean_restore_button")
+                ) {
+                    Text(
+                        text = stringResource(R.string.btn_restore_clean),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = HudAmber
+                    )
+                }
+
+                Button(
+                    onClick = { onConfirm(false) },
+                    shape = CutCornerShape(topStart = 6.dp, bottomEnd = 6.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HudLime.copy(alpha = 0.2f),
+                        contentColor = HudLime
+                    ),
+                    border = BorderStroke(1.dp, HudLime),
+                    modifier = Modifier.fillMaxWidth().testTag("merge_restore_button")
+                ) {
+                    Text(
+                        text = stringResource(R.string.btn_restore_merge),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = HudLime
+                    )
+                }
+            }
+        },
+        dismissButton = {
+            OutlinedButton(
+                onClick = onDismiss,
+                shape = CutCornerShape(topStart = 6.dp, bottomEnd = 6.dp),
+                border = BorderStroke(1.dp, HudTextSecondary),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = stringResource(R.string.btn_dialog_cancel),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = HudTextSecondary
+                )
+            }
+        },
+        containerColor = HudSurfaceCard,
+        shape = CutCornerShape(topStart = 12.dp, bottomEnd = 12.dp)
+    )
 }

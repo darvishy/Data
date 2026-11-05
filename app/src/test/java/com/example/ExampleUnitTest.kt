@@ -261,6 +261,147 @@ class ExampleUnitTest {
         // Test fallback for unknown ID
         assertEquals(HudModule.BANK_MELI, HudModule.fromId("unknown_xyz"))
     }
+
+    @Test
+    fun `verify backup file name generation and nexusbak extension`() {
+        val fileName = com.example.engine.NexusDatabaseBackupEngine.generateDefaultBackupFileName()
+        assertTrue(fileName.startsWith("nexus_hud_backup_"))
+        assertTrue(fileName.endsWith(".nexusbak"))
+    }
+
+    @Test
+    fun `verify database backup binary archive stream round trip serialization`() {
+        val sampleRecords = listOf(
+            com.example.data.IdentityEntity(
+                id = 1L,
+                moduleId = "bank_meli",
+                fullName = "Aria Parsa",
+                nationalCode = "0019283746",
+                phone = "09121112233",
+                accountOrHandle = "6037997112345678",
+                cardNumber = "6037997112345678",
+                fatherName = "Dariush",
+                idNumber = "45821",
+                birthDate = "1368/04/15",
+                city = "Tehran",
+                province = "Tehran",
+                gpuSignatureHash = 123456L,
+                importedAt = 9999L
+            ),
+            com.example.data.IdentityEntity(
+                id = 2L,
+                moduleId = "telegram",
+                fullName = "Kian Rad",
+                nationalCode = "784512963",
+                phone = "989123456789",
+                accountOrHandle = "784512963",
+                username = "@kian_rad",
+                gpuSignatureHash = 654321L,
+                importedAt = 10000L
+            )
+        )
+
+        val byteOut = java.io.ByteArrayOutputStream()
+        java.io.DataOutputStream(byteOut).use { dataOut ->
+            dataOut.write("NEXUSBK2".toByteArray(Charsets.US_ASCII))
+            dataOut.writeInt(2)
+            dataOut.writeLong(System.currentTimeMillis())
+            dataOut.writeLong(sampleRecords.size.toLong())
+            dataOut.flush()
+
+            java.util.zip.GZIPOutputStream(byteOut).use { gzOut ->
+                val pOut = java.io.DataOutputStream(gzOut)
+                for (r in sampleRecords) {
+                    pOut.writeUTF(r.moduleId)
+                    pOut.writeUTF(r.fullName)
+                    pOut.writeUTF(r.nationalCode)
+                    pOut.writeUTF(r.phone)
+                    pOut.writeUTF(r.accountOrHandle)
+                    pOut.writeUTF(r.cardNumber)
+                    pOut.writeUTF(r.fatherName)
+                    pOut.writeUTF(r.idNumber)
+                    pOut.writeUTF(r.birthDate)
+                    pOut.writeUTF(r.city)
+                    pOut.writeUTF(r.province)
+                    pOut.writeUTF(r.birthCity)
+                    pOut.writeUTF(r.birthProvince)
+                    pOut.writeUTF(r.postalCode)
+                    pOut.writeUTF(r.address)
+                    pOut.writeUTF(r.email)
+                    pOut.writeUTF(r.username)
+                    pOut.writeUTF(r.memberCode)
+                    pOut.writeUTF(r.branchId)
+                    pOut.writeUTF(r.defNumOld)
+                    pOut.writeUTF(r.passwordHint)
+                    pOut.writeUTF(r.passwValue)
+                    pOut.writeUTF(r.rawDetails)
+                    pOut.writeLong(r.gpuSignatureHash)
+                    pOut.writeLong(r.importedAt)
+                }
+                pOut.flush()
+            }
+        }
+
+        val rawArchiveBytes = byteOut.toByteArray()
+        assertTrue(rawArchiveBytes.isNotEmpty())
+
+        // Read back and verify
+        val byteIn = java.io.ByteArrayInputStream(rawArchiveBytes)
+        val dataIn = java.io.DataInputStream(byteIn)
+        val magic = ByteArray(8)
+        dataIn.readFully(magic)
+        assertEquals("NEXUSBK2", String(magic, Charsets.US_ASCII))
+        val version = dataIn.readInt()
+        assertEquals(2, version)
+        val timestamp = dataIn.readLong()
+        assertTrue(timestamp > 0L)
+        val count = dataIn.readLong()
+        assertEquals(sampleRecords.size.toLong(), count)
+
+        val restored = ArrayList<com.example.data.IdentityEntity>()
+        java.util.zip.GZIPInputStream(byteIn).use { gzIn ->
+            val pIn = java.io.DataInputStream(gzIn)
+            for (i in 0 until count) {
+                restored.add(
+                    com.example.data.IdentityEntity(
+                        moduleId = pIn.readUTF(),
+                        fullName = pIn.readUTF(),
+                        nationalCode = pIn.readUTF(),
+                        phone = pIn.readUTF(),
+                        accountOrHandle = pIn.readUTF(),
+                        cardNumber = pIn.readUTF(),
+                        fatherName = pIn.readUTF(),
+                        idNumber = pIn.readUTF(),
+                        birthDate = pIn.readUTF(),
+                        city = pIn.readUTF(),
+                        province = pIn.readUTF(),
+                        birthCity = pIn.readUTF(),
+                        birthProvince = pIn.readUTF(),
+                        postalCode = pIn.readUTF(),
+                        address = pIn.readUTF(),
+                        email = pIn.readUTF(),
+                        username = pIn.readUTF(),
+                        memberCode = pIn.readUTF(),
+                        branchId = pIn.readUTF(),
+                        defNumOld = pIn.readUTF(),
+                        passwordHint = pIn.readUTF(),
+                        passwValue = pIn.readUTF(),
+                        rawDetails = pIn.readUTF(),
+                        gpuSignatureHash = pIn.readLong(),
+                        importedAt = pIn.readLong()
+                    )
+                )
+            }
+        }
+
+        assertEquals(2, restored.size)
+        assertEquals("bank_meli", restored[0].moduleId)
+        assertEquals("Aria Parsa", restored[0].fullName)
+        assertEquals("0019283746", restored[0].nationalCode)
+        assertEquals("telegram", restored[1].moduleId)
+        assertEquals("Kian Rad", restored[1].fullName)
+        assertEquals("@kian_rad", restored[1].username)
+    }
 }
 
 

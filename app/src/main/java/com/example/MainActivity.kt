@@ -55,6 +55,7 @@ fun NexusHudApp(
     val searchTelemetry by viewModel.searchTelemetry.collectAsStateWithLifecycle()
     val universalSearchTelemetry by viewModel.universalSearchTelemetry.collectAsStateWithLifecycle()
     val universalModuleFilter by viewModel.universalModuleFilter.collectAsStateWithLifecycle()
+    val backupState by viewModel.backupState.collectAsStateWithLifecycle()
 
     Crossfade(
         targetState = uiState.authState,
@@ -114,6 +115,12 @@ fun NexusHudApp(
                         moduleCounts = moduleCounts,
                         searchTelemetry = universalSearchTelemetry,
                         selectedFilterModuleId = universalModuleFilter,
+                        backupState = backupState,
+                        suggestedBackupFileName = viewModel.getSuggestedBackupFileName(),
+                        onExportBackup = viewModel::exportAllToBackup,
+                        onFastRestoreBackup = viewModel::fastImportFromBackup,
+                        onCancelBackupOperation = viewModel::cancelBackupOperation,
+                        onDismissBackupCompleted = viewModel::dismissBackupCompleted,
                         onSearchQueryChange = viewModel::updateUniversalSearchQuery,
                         onFilterModuleChange = viewModel::setUniversalModuleFilter,
                         onClearSearch = viewModel::clearUniversalSearch,
