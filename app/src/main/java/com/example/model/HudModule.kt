@@ -9,9 +9,11 @@ import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.CurrencyExchange
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.example.R
+import com.example.ui.theme.HudAmber
 import com.example.ui.theme.HudCoral
 import com.example.ui.theme.HudCyan
 import com.example.ui.theme.HudElectricBlue
@@ -89,6 +91,26 @@ enum class HudModule(
         primaryColor = HudTeal,
         secondaryColor = HudCyan,
         icon = Icons.AutoMirrored.Filled.Send
+    ),
+    BASIJ(
+        id = "basij",
+        code = "SEC-BASIJ",
+        labelRes = R.string.node_basij,
+        displayLabel = "Basij",
+        sectorTag = "SEC-CORPS // BASIJ",
+        primaryColor = HudAmber,
+        secondaryColor = HudLime,
+        icon = Icons.Filled.Security
+    ),
+    ENTEZAMI(
+        id = "entezami",
+        code = "LAW-POL",
+        labelRes = R.string.node_entezami,
+        displayLabel = "Entezami",
+        sectorTag = "LAW-POLICE // ENTEZAMI",
+        primaryColor = HudElectricBlue,
+        secondaryColor = HudCyan,
+        icon = Icons.Filled.AssignmentInd
     );
 
     val expectedCsvSchema: String
@@ -104,7 +126,11 @@ enum class HudModule(
             IRANCELL ->
                 "FULL_NAME, NATIONAL_CODE, MOBILE, ACCOUNT_HANDLE, CITY, ADDRESS"
             TELEGRAM ->
-                "account_id;phone;username;first_name;last_name  [FILTER: phone starts with 98]"
+                "account_id;phone;username;first_name;last_name  [FILTER: phone starts with (989)]"
+            BASIJ ->
+                "name,dob,national_id,address,postal_code"
+            ENTEZAMI ->
+                "full_name,dob,national_id,address,postal_code,date_of_address"
         }
 
     companion object {

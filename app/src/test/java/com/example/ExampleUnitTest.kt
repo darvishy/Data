@@ -11,14 +11,16 @@ import org.junit.Test
 class ExampleUnitTest {
 
     @Test
-    fun `verify 6 HUD modules have clean unnumbered names without BankSepah or BankTejarat`() {
+    fun `verify 8 HUD modules have clean unnumbered names without BankSepah or BankTejarat`() {
         val expected = listOf(
             "BankMeli",
             "BankMelat",
             "BankSaderat",
             "Citizen",
             "Irancell",
-            "Telegram"
+            "Telegram",
+            "Basij",
+            "Entezami"
         )
         assertEquals(expected, HudModule.entries.map { it.displayLabel })
     }
@@ -168,12 +170,67 @@ class ExampleUnitTest {
         )
         assertTrue(!CsvSchemaParser.passesModuleImportFilter("telegram", emptyPhoneRow))
 
-        // Verify zero-allocation raw line 98 pre-filter (including Persian digits, quotes, '+', and empty-column guard)
-        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784512963;989123456789;user;Aria;Parsa", 1, ';'))
-        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784512963;\"+989123456789\";user;Aria;Parsa", 1, ';'))
-        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784512963;۹۸۹۱۲۳۴۵۶۷۸۹;user;Aria;Parsa", 1, ';'))
-        assertTrue(!CsvSchemaParser.rawTelegramLinePasses98Filter("784512999;14155552671;foreign;John;Doe", 1, ';'))
-        assertTrue(!CsvSchemaParser.rawTelegramLinePasses98Filter("784513000;;98_username_not_phone;Sara;Rad", 1, ';'))
+        // Verify non-989 Iranian numbers (e.g. landline 9821...) are strictly rejected
+        val nonMobileRow = CsvSchemaParser.parseIdentityCsvRow(
+            "telegram",
+            "784513001;982188776655;tehran_landline;Reza;Tehrani",
+            headers,
+            3
+        )
+        assertTrue(!CsvSchemaParser.passesModuleImportFilter("telegram", nonMobileRow))
+
+        // Verify zero-allocation raw line 989 pre-filter (including Persian digits, quotes, '+', and empty-column guard)
+        assertTrue(CsvSchemaParser.rawTelegramLinePasses989Filter("784512963;989123456789;user;Aria;Parsa", 1, ';'))
+        assertTrue(CsvSchemaParser.rawTelegramLinePasses989Filter("784512963;\"+989123456789\";user;Aria;Parsa", 1, ';'))
+        assertTrue(CsvSchemaParser.rawTelegramLinePasses989Filter("784512963;\"(989)123456789\";user;Aria;Parsa", 1, ';'))
+        assertTrue(CsvSchemaParser.rawTelegramLinePasses989Filter("784512963;۹۸۹۱۲۳۴۵۶۷۸۹;user;Aria;Parsa", 1, ';'))
+        assertTrue(!CsvSchemaParser.rawTelegramLinePasses989Filter("784512999;14155552671;foreign;John;Doe", 1, ';'))
+        assertTrue(!CsvSchemaParser.rawTelegramLinePasses989Filter("784513001;982188776655;landline;Reza;Tehrani", 1, ';'))
+        assertTrue(!CsvSchemaParser.rawTelegramLinePasses989Filter("784513000;;989_username_not_phone;Sara;Rad", 1, ';'))
+    }
+
+    @Test
+    fun `verify Basij 5 column CSV format with and without header`() {
+        val headerLine = "name,dob,national_id,address,postal_code"
+        assertTrue(CsvSchemaParser.looksLikeCsvHeader(headerLine))
+        val headers = CsvSchemaParser.splitCsvLineFast(headerLine)
+
+        val rowLine = "Reza Ahmadi,1365/02/10,0012345678,\"Tehran Enghelab Sq No 12\",1415512345"
+
+        val parsedHeader = CsvSchemaParser.parseIdentityCsvRow("basij", rowLine, headers, 0)
+        val parsedPositional = CsvSchemaParser.parseIdentityCsvRow("basij", rowLine, null, 0)
+
+        for (parsed in listOf(parsedHeader, parsedPositional)) {
+            assertEquals("Reza Ahmadi", parsed.fullName)
+            assertEquals("1365/02/10", parsed.birthDate)
+            assertEquals("0012345678", parsed.nationalCode)
+            assertEquals("Tehran Enghelab Sq No 12", parsed.address)
+            assertEquals("1415512345", parsed.postalCode)
+            assertEquals("-", parsed.phone)
+        }
+    }
+
+    @Test
+    fun `verify Entezami 6 column CSV format with and without header`() {
+        val headerLine = "full_name,dob,national_id,address,postal_code,date_of_address"
+        assertTrue(CsvSchemaParser.looksLikeCsvHeader(headerLine))
+        val headers = CsvSchemaParser.splitCsvLineFast(headerLine)
+
+        val rowLine = "Mahdi Hosseini,1370/08/20,0098765432,\"Isfahan Chaharbagh Ave\",8146598765,1402/05/11"
+
+        val parsedHeader = CsvSchemaParser.parseIdentityCsvRow("entezami", rowLine, headers, 0)
+        val parsedPositional = CsvSchemaParser.parseIdentityCsvRow("entezami", rowLine, null, 0)
+
+        for (parsed in listOf(parsedHeader, parsedPositional)) {
+            assertEquals("Mahdi Hosseini", parsed.fullName)
+            assertEquals("1370/08/20", parsed.birthDate)
+            assertEquals("0098765432", parsed.nationalCode)
+            assertEquals("Isfahan Chaharbagh Ave", parsed.address)
+            assertEquals("8146598765", parsed.postalCode)
+            assertEquals("1402/05/11", parsed.defNumOld)
+            assertTrue(parsed.rawDetails.contains("1402/05/11"))
+            assertEquals("-", parsed.phone)
+        }
     }
 
     @Test

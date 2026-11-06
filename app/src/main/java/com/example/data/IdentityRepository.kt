@@ -340,7 +340,7 @@ class IdentityRepository(private val dao: IdentityDao) {
         val candidateModules = if (targetModuleId != null) {
             listOf(targetModuleId)
         } else {
-            listOf("bank_meli", "bank_melat", "bank_saderat", "citizen", "irancell", "telegram")
+            listOf("bank_meli", "bank_melat", "bank_saderat", "citizen", "irancell", "telegram", "basij", "entezami")
         }
 
         // Tier 1: Sub-millisecond B-Tree Index Seeks for single-token queries
@@ -498,6 +498,8 @@ class IdentityRepository(private val dao: IdentityDao) {
                 "nationalCode", "accountOrHandle", "fullName", "fatherName",
                 "idNumber", "cardNumber", "phone", "city", "address"
             )
+            "basij" -> listOf("fullName", "nationalCode", "birthDate", "address", "postalCode")
+            "entezami" -> listOf("fullName", "nationalCode", "birthDate", "address", "postalCode", "defNumOld", "rawDetails")
             else -> listOf("fullName", "nationalCode", "phone", "accountOrHandle", "city", "rawDetails")
         }
 

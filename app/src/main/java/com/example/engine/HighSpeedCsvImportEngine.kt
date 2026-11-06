@@ -194,6 +194,7 @@ object CsvSchemaParser {
     private const val ROLE_DEF_NUM_OLD = 23
     private const val ROLE_PASSWORD_HINT = 24
     private const val ROLE_PASSW = 25
+    private const val ROLE_DATE_OF_ADDRESS = 26
 
     @Volatile
     private var cachedHeaderSource: List<String>? = null
@@ -205,8 +206,14 @@ object CsvSchemaParser {
         val clean = firstLine.removePrefix("\uFEFF").lowercase()
         return clean.contains("national_code") ||
             clean.contains("national id") ||
+            clean.contains("national_id") ||
             clean.contains("fullname") ||
             clean.contains("full_name") ||
+            clean.contains("date_of_address") ||
+            clean.contains("dateofaddress") ||
+            clean.contains("dob") ||
+            clean.contains("postal_code") ||
+            clean.contains("postal code") ||
             clean.contains("account_number") ||
             clean.contains("accountnumber") ||
             clean.contains("defineationnumber") ||
@@ -216,7 +223,6 @@ object CsvSchemaParser {
             clean.contains("user_phone_number") ||
             clean.contains("definenum_old") ||
             clean.contains("id_branch") ||
-            clean.contains("postal code") ||
             clean.contains("father_name") ||
             clean.contains("card_no") ||
             clean.contains("birthday") ||
@@ -224,7 +230,7 @@ object CsvSchemaParser {
             clean.contains("account_id") ||
             clean.contains("first_name") ||
             clean.contains("last_name") ||
-            (clean.contains("name") && (clean.contains("phone") || clean.contains("mobile")))
+            (clean.contains("name") && (clean.contains("phone") || clean.contains("mobile") || clean.contains("address")))
     }
 
     fun detectDelimiter(line: String): Char {
@@ -339,6 +345,7 @@ object CsvSchemaParser {
                 "member", "member_code", "member_id" -> ROLE_MEMBER_CODE
                 "id_branch", "branch_id", "branch" -> ROLE_BRANCH_ID
                 "definenum_old", "define_num_old", "old_definenum" -> ROLE_DEF_NUM_OLD
+                "date_of_address", "dateofaddress", "address_date", "date_address" -> ROLE_DATE_OF_ADDRESS
                 "password_hint", "pass_hint", "hint" -> ROLE_PASSWORD_HINT
                 "passw", "password", "pass" -> ROLE_PASSW
                 else -> ROLE_UNMAPPED
@@ -376,40 +383,49 @@ object CsvSchemaParser {
     }
 
     /**
-     * Zero-allocation check whether a phone string begins with `98` in its first 2 digits
-     * (after skipping whitespace, BOM, quotes, and leading `+`, and normalizing Persian/Arabic digits).
+     * Zero-allocation check whether a phone string begins with `989` in its first 3 digits
+     * (after skipping whitespace, BOM, quotes, parentheses, and leading `+`, and normalizing Persian/Arabic digits).
      */
-    fun hasIran98Prefix(rawPhone: String): Boolean {
+    fun hasIran989Prefix(rawPhone: String): Boolean {
         val len = rawPhone.length
         var i = 0
         while (i < len) {
             val c = rawPhone[i]
-            if (c <= ' ' || c == '+' || c == '"' || c == '\'' || c == '\uFEFF' || c == '\u200E' || c == '\u200F') {
+            if (c <= ' ' || c == '+' || c == '(' || c == ')' || c == '"' || c == '\'' || c == '\uFEFF' || c == '\u200E' || c == '\u200F') {
                 i++
             } else {
                 break
             }
         }
-        if (i + 1 >= len) return false
+        if (i + 2 >= len) return false
         val d0 = toAsciiDigitOrChar(rawPhone[i])
         val d1 = toAsciiDigitOrChar(rawPhone[i + 1])
-        return d0 == '9' && d1 == '8'
+        val d2 = toAsciiDigitOrChar(rawPhone[i + 2])
+        return d0 == '9' && d1 == '8' && d2 == '9'
     }
+
+    fun hasIran98Prefix(rawPhone: String): Boolean = hasIran989Prefix(rawPhone)
 
     /**
      * Ultra-fast zero-allocation pre-filter for raw Telegram CSV lines:
      * Locates [phoneColIndex] directly in [rawLine] without allocating column strings or lists,
-     * and checks whether that column starts with `98`.
-     * Rejects non-98 rows ~15x faster than full CSV splitting on multi-million-row Telegram dumps.
+     * and checks whether that column starts with `989`.
+     * Rejects non-989 rows ~15x faster than full CSV splitting on multi-million-row Telegram dumps.
      */
     fun rawTelegramLinePasses98Filter(
+        rawLine: String,
+        phoneColIndex: Int = 1,
+        preferredDelimiter: Char = '\u0000'
+    ): Boolean = rawTelegramLinePasses989Filter(rawLine, phoneColIndex, preferredDelimiter)
+
+    fun rawTelegramLinePasses989Filter(
         rawLine: String,
         phoneColIndex: Int = 1,
         preferredDelimiter: Char = '\u0000'
     ): Boolean {
         if (phoneColIndex < 0) return true
         val len = rawLine.length
-        if (len < 3) return false
+        if (len < 4) return false
         val delimiter = if (preferredDelimiter != '\u0000') {
             preferredDelimiter
         } else {
@@ -436,26 +452,27 @@ object CsvSchemaParser {
 
         if (currentCol != phoneColIndex || i >= len) return false
 
-        // Skip leading quotes, '+', whitespace inside the target phone column, stopping if delimiter reached
+        // Skip leading quotes, '+', '(', ')', whitespace inside the target phone column, stopping if delimiter reached
         while (i < len) {
             val c = rawLine[i]
             if (c == delimiter && !inQuotes) return false
             if (c == '"') {
                 inQuotes = !inQuotes
                 i++
-            } else if (c <= ' ' || c == '+' || c == '\'' || c == '\uFEFF' || c == '\u200E' || c == '\u200F') {
+            } else if (c <= ' ' || c == '+' || c == '(' || c == ')' || c == '\'' || c == '\uFEFF' || c == '\u200E' || c == '\u200F') {
                 i++
             } else {
                 break
             }
         }
 
-        if (i + 1 >= len) return false
+        if (i + 2 >= len) return false
         val c0 = rawLine[i]
         val c1 = rawLine[i + 1]
-        if ((c0 == delimiter || c1 == delimiter) && !inQuotes) return false
+        val c2 = rawLine[i + 2]
+        if ((c0 == delimiter || c1 == delimiter || c2 == delimiter) && !inQuotes) return false
 
-        return toAsciiDigitOrChar(c0) == '9' && toAsciiDigitOrChar(c1) == '8'
+        return toAsciiDigitOrChar(c0) == '9' && toAsciiDigitOrChar(c1) == '8' && toAsciiDigitOrChar(c2) == '9'
     }
 
     private fun toAsciiDigitOrChar(ch: Char): Char = when (ch) {
@@ -522,6 +539,8 @@ object CsvSchemaParser {
             "bank_saderat" -> parseBankSaderatPositional(cols, index)
             "citizen" -> parseCitizenPositional(cols, index)
             "telegram" -> parseTelegramPositional(cols, index)
+            "basij" -> parseBasijPositional(cols, index)
+            "entezami" -> parseEntezamiPositional(cols, index)
             else -> {
                 when {
                     cols.size >= 13 -> parseBankMelatPositional(cols, index)
@@ -583,12 +602,12 @@ object CsvSchemaParser {
 
     /**
      * Module-specific import filter:
-     * In the Telegram section (`telegram`), only import records whose `phone` field starts with `98`
-     * in its first 2 digits (after normalizing Persian/Arabic digits and stripping any leading `+` or quotes).
+     * In the Telegram section (`telegram`), only import records whose `phone` field starts with `989`
+     * (after normalizing Persian/Arabic digits and stripping any leading `+`, `(`, `)`, or quotes).
      */
     fun passesModuleImportFilter(moduleId: String, row: ParsedCsvIdentityRow): Boolean {
         if (moduleId != "telegram") return true
-        return hasIran98Prefix(row.phone)
+        return hasIran989Prefix(row.phone)
     }
 
     private fun parseBankMeliPositional(cols: List<String>, index: Int): ParsedCsvIdentityRow {
@@ -719,6 +738,71 @@ object CsvSchemaParser {
         )
     }
 
+    private fun parseBasijPositional(cols: List<String>, index: Int): ParsedCsvIdentityRow {
+        // Importer Format: (name, dob, national_id, address, postal_code)
+        val name = cols.getOrNull(0)?.takeIf { it.isNotEmpty() } ?: "Basij-${index + 1}"
+        val dob = cols.colOrDash(1)
+        val nationalId = cols.colOrDash(2)
+        val address = cols.colOrDash(3)
+        val postalCode = cols.colOrDash(4)
+        val extra = joinTailColumns(cols, 5)
+
+        return ParsedCsvIdentityRow(
+            originalIndex = index,
+            fullName = name,
+            nationalCode = nationalId,
+            phone = "-",
+            accountOrHandle = "-",
+            cardNumber = "-",
+            fatherName = "-",
+            idNumber = "-",
+            birthDate = dob,
+            city = "-",
+            province = "-",
+            birthCity = "-",
+            birthProvince = "-",
+            postalCode = postalCode,
+            address = address,
+            rawDetails = extra
+        )
+    }
+
+    private fun parseEntezamiPositional(cols: List<String>, index: Int): ParsedCsvIdentityRow {
+        // Importer Format: (full_name, dob, national_id, address, postal_code, date_of_address)
+        val fullName = cols.getOrNull(0)?.takeIf { it.isNotEmpty() } ?: "Entezami-${index + 1}"
+        val dob = cols.colOrDash(1)
+        val nationalId = cols.colOrDash(2)
+        val address = cols.colOrDash(3)
+        val postalCode = cols.colOrDash(4)
+        val dateOfAddress = cols.colOrDash(5)
+        val tail = joinTailColumns(cols, 6)
+        val details = if (dateOfAddress != "-") {
+            if (tail.isNotEmpty()) "DATE OF ADDRESS: $dateOfAddress | $tail" else "DATE OF ADDRESS: $dateOfAddress"
+        } else {
+            tail
+        }
+
+        return ParsedCsvIdentityRow(
+            originalIndex = index,
+            fullName = fullName,
+            nationalCode = nationalId,
+            phone = "-",
+            accountOrHandle = "-",
+            cardNumber = "-",
+            fatherName = "-",
+            idNumber = "-",
+            birthDate = dob,
+            city = "-",
+            province = "-",
+            birthCity = "-",
+            birthProvince = "-",
+            postalCode = postalCode,
+            address = address,
+            defNumOld = dateOfAddress,
+            rawDetails = details
+        )
+    }
+
     private fun parseWithCompiledHeaders(
         moduleId: String,
         cols: List<String>,
@@ -798,6 +882,12 @@ object CsvSchemaParser {
                 ROLE_MEMBER_CODE -> if (memberCode.isEmpty()) memberCode = value
                 ROLE_BRANCH_ID -> if (branchId.isEmpty()) branchId = value
                 ROLE_DEF_NUM_OLD -> if (defNumOld.isEmpty()) defNumOld = value
+                ROLE_DATE_OF_ADDRESS -> {
+                    if (defNumOld.isEmpty()) defNumOld = value
+                    val sb = unmappedSb ?: StringBuilder(64).also { unmappedSb = it }
+                    if (sb.isNotEmpty()) sb.append(" | ")
+                    sb.append("DATE OF ADDRESS: ").append(value)
+                }
                 ROLE_PASSWORD_HINT -> if (passwordHint.isEmpty()) passwordHint = value
                 ROLE_PASSW -> if (passwValue.isEmpty()) passwValue = value
                 else -> {
@@ -844,6 +934,8 @@ object CsvSchemaParser {
                 "bank_saderat" -> parseBankSaderatPositional(cols, index)
                 "citizen" -> parseCitizenPositional(cols, index)
                 "telegram" -> parseTelegramPositional(cols, index)
+                "basij" -> parseBasijPositional(cols, index)
+                "entezami" -> parseEntezamiPositional(cols, index)
                 else -> parseGenericPositional(cols, index, rawLine)
             }
         }
@@ -1252,6 +1344,12 @@ class HighSpeedCsvImportEngine(
                     "telegram" -> listOf(
                         "account_id", "phone", "username", "first_name", "last_name"
                     )
+                    "basij" -> listOf(
+                        "name", "dob", "national_id", "address", "postal_code"
+                    )
+                    "entezami" -> listOf(
+                        "full_name", "dob", "national_id", "address", "postal_code", "date_of_address"
+                    )
                     else -> null
                 }
                 val compiledHeaders = schemaHeader?.let { CsvSchemaParser.compileHeaders(it) }
@@ -1399,6 +1497,27 @@ class HighSpeedCsvImportEngine(
                                             sb.append(fn.lowercase()).append('_').append(ln.lowercase())
                                                 .append('_').append(globalIdx % 9999).append(';')
                                             sb.append(fn).append(';').append(ln)
+                                        }
+                                        "basij" -> {
+                                            // (name, dob, national_id, address, postal_code)
+                                            sb.append(fn).append(' ').append(ln).append(',')
+                                            appendBirthDate(sb, year, month, day).append(',')
+                                            appendZeroPadded(sb, natNum, 10).append(',')
+                                            sb.append("\"District ").append((globalIdx % 22) + 1)
+                                                .append(" St ").append(globalIdx % 80)
+                                                .append(" No ").append((globalIdx % 50) + 1).append("\",")
+                                            appendZeroPadded(sb, (1111100000L + globalIdx * 333L) % 9_999_999_999L, 10)
+                                        }
+                                        "entezami" -> {
+                                            // (full_name, dob, national_id, address, postal_code, date_of_address)
+                                            sb.append(fn).append(' ').append(ln).append(',')
+                                            appendBirthDate(sb, year, month, day).append(',')
+                                            appendZeroPadded(sb, natNum, 10).append(',')
+                                            sb.append("\"Sector ").append((globalIdx % 18) + 1)
+                                                .append(" Ave ").append(globalIdx % 100)
+                                                .append(" Bldg ").append((globalIdx % 30) + 1).append("\",")
+                                            appendZeroPadded(sb, (1333300000L + globalIdx * 444L) % 9_999_999_999L, 10).append(',')
+                                            appendBirthDate(sb, year + (globalIdx % 5) + 1, month, day)
                                         }
                                         else -> {
                                             sb.append(fn).append(' ').append(ln).append(',')

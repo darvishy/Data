@@ -319,6 +319,55 @@ fun IdentityRecordHudRow(
                     }
                 }
 
+                module == HudModule.BASIJ -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        RecordFieldChip(label = "NAT_ID", value = record.nationalCode, color = HudCyan, modifier = Modifier.weight(1f))
+                        RecordFieldChip(label = "DOB", value = record.birthDate, color = HudAmber, modifier = Modifier.weight(1f))
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        RecordFieldChip(label = "POSTAL", value = record.postalCode, color = HudLime, modifier = Modifier.weight(1f))
+                    }
+                    if (record.address != "-") {
+                        RecordFieldChip(
+                            label = "ADDRESS",
+                            value = record.address,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+
+                module == HudModule.ENTEZAMI -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        RecordFieldChip(label = "NAT_ID", value = record.nationalCode, color = HudCyan, modifier = Modifier.weight(1f))
+                        RecordFieldChip(label = "DOB", value = record.birthDate, color = HudAmber, modifier = Modifier.weight(1f))
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        RecordFieldChip(label = "POSTAL", value = record.postalCode, color = HudLime, modifier = Modifier.weight(1f))
+                        RecordFieldChip(label = "ADDR_DATE", value = record.defNumOld, color = HudCyan, modifier = Modifier.weight(1f))
+                    }
+                    if (record.address != "-") {
+                        RecordFieldChip(
+                            label = "ADDRESS",
+                            value = record.address,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+
                 else -> {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -804,6 +853,19 @@ fun buildRecordDetailFields(
             addIfPresent("MOBILE", record.phone, HudLime)
             addIfPresent("ACCOUNT / HANDLE", record.accountOrHandle, HudAmber)
             addIfPresent("CITY", record.city, module.primaryColor)
+            addIfPresent("ADDRESS", record.address, HudTextPrimary, rightAlignValue = true)
+        }
+        HudModule.BASIJ -> {
+            addIfPresent("NATIONAL ID", record.nationalCode, HudCyan)
+            addIfPresent("DOB", record.birthDate, HudAmber)
+            addIfPresent("POSTAL CODE", record.postalCode, HudLime)
+            addIfPresent("ADDRESS", record.address, HudTextPrimary, rightAlignValue = true)
+        }
+        HudModule.ENTEZAMI -> {
+            addIfPresent("NATIONAL ID", record.nationalCode, HudCyan)
+            addIfPresent("DOB", record.birthDate, HudAmber)
+            addIfPresent("POSTAL CODE", record.postalCode, HudLime)
+            addIfPresent("DATE OF ADDRESS", record.defNumOld, HudCyan)
             addIfPresent("ADDRESS", record.address, HudTextPrimary, rightAlignValue = true)
         }
     }
