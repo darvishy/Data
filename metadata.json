@@ -1,5 +1,5 @@
 {
-  "name": "Nexus HUD",
+  "name": "Nullemperor",
   "description": "High-speed multicolor HUD identity CSV database importer and real-time search console with biometric security.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

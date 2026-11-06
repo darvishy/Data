@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Nexus HUD"
+rootProject.name = "Nullemperor"
 
 include(":app")

@@ -340,7 +340,7 @@ class IdentityRepository(private val dao: IdentityDao) {
         val candidateModules = if (targetModuleId != null) {
             listOf(targetModuleId)
         } else {
-            listOf("bank_meli", "bank_melat", "bank_saderat", "citizen", "irancell", "telegram", "basij", "entezami")
+            listOf("bank_meli", "bank_melat", "bank_saderat", "citizen", "basij", "entezami")
         }
 
         // Tier 1: Sub-millisecond B-Tree Index Seeks for single-token queries
@@ -487,7 +487,6 @@ class IdentityRepository(private val dao: IdentityDao) {
         limit: Int
     ): Pair<String, Array<Any>> {
         val searchableColumns = when (moduleId) {
-            "telegram" -> listOf("accountOrHandle", "phone", "username", "fullName")
             "bank_meli" -> listOf("nationalCode", "cardNumber", "fullName", "phone", "birthDate")
             "citizen" -> listOf("fullName", "nationalCode", "phone", "postalCode", "city", "address")
             "bank_saderat" -> listOf(

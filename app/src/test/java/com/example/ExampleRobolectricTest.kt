@@ -83,12 +83,13 @@ class ExampleRobolectricTest {
                     importedAt = 1000L
                 ),
                 IdentityEntity(
-                    moduleId = "telegram",
+                    moduleId = "basij",
                     fullName = "Aria Parsa",
-                    nationalCode = "784512963",
-                    phone = "989123456789",
-                    accountOrHandle = "784512963",
-                    username = "@nullemperor_dev",
+                    nationalCode = "0012345678",
+                    phone = "-",
+                    accountOrHandle = "-",
+                    address = "Tehran",
+                    postalCode = "1415512345",
                     gpuSignatureHash = 654321L,
                     importedAt = 1000L
                 )
@@ -103,13 +104,13 @@ class ExampleRobolectricTest {
             }
             assertEquals(1L, meliHits)
 
-            var tgHits = 0L
-            repo.executeVisibleHighSpeedSearch("telegram", "09123456789") { telemetry ->
+            var basijHits = 0L
+            repo.executeVisibleHighSpeedSearch("basij", "0012345678") { telemetry ->
                 if (telemetry.stage == SearchStage.COMPLETE) {
-                    tgHits = telemetry.matchCount
+                    basijHits = telemetry.matchCount
                 }
             }
-            assertEquals(1L, tgHits)
+            assertEquals(1L, basijHits)
 
             // Test Universal Multi-Database Search across all nodes
             var universalHits = 0L
@@ -132,9 +133,9 @@ class ExampleRobolectricTest {
             }
             assertTrue(phoneHits >= 1L)
 
-            // Test Universal Filter targeted to Telegram node
+            // Test Universal Filter targeted to Basij node
             var filteredHits = 0L
-            repo.executeUniversalSearch(rawQuery = "Aria", targetModuleId = "telegram") { telemetry ->
+            repo.executeUniversalSearch(rawQuery = "Aria", targetModuleId = "basij") { telemetry ->
                 if (telemetry.stage == SearchStage.COMPLETE) {
                     filteredHits = telemetry.matchCount
                 }

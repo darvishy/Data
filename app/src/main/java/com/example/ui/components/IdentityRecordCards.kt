@@ -303,22 +303,6 @@ fun IdentityRecordHudRow(
                     }
                 }
 
-                module == HudModule.TELEGRAM -> {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        RecordFieldChip(label = "ACCOUNT_ID", value = record.accountOrHandle, color = HudCyan, modifier = Modifier.weight(1f))
-                        RecordFieldChip(label = "PHONE", value = record.phone, color = HudLime, modifier = Modifier.weight(1f))
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        RecordFieldChip(label = "USERNAME", value = record.username, color = accentColor, modifier = Modifier.weight(1f))
-                    }
-                }
-
                 module == HudModule.BASIJ -> {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -840,18 +824,6 @@ fun buildRecordDetailFields(
             addIfPresent("PHONE", record.phone, HudLime)
             addIfPresent("BIRTHDAY", record.birthDate, HudAmber)
             addIfPresent("POSTAL CODE", record.postalCode, HudMagenta)
-            addIfPresent("CITY", record.city, module.primaryColor)
-            addIfPresent("ADDRESS", record.address, HudTextPrimary, rightAlignValue = true)
-        }
-        HudModule.TELEGRAM -> {
-            addIfPresent("ACCOUNT ID", record.accountOrHandle, HudCyan)
-            addIfPresent("PHONE", record.phone, HudLime)
-            addIfPresent("USERNAME", record.username, module.primaryColor)
-        }
-        HudModule.IRANCELL -> {
-            addIfPresent("NATIONAL CODE", record.nationalCode, HudCyan)
-            addIfPresent("MOBILE", record.phone, HudLime)
-            addIfPresent("ACCOUNT / HANDLE", record.accountOrHandle, HudAmber)
             addIfPresent("CITY", record.city, module.primaryColor)
             addIfPresent("ADDRESS", record.address, HudTextPrimary, rightAlignValue = true)
         }

@@ -2,13 +2,11 @@ package com.example.model
 
 import androidx.annotation.StringRes
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.AssignmentInd
 import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.CurrencyExchange
-import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -20,7 +18,6 @@ import com.example.ui.theme.HudElectricBlue
 import com.example.ui.theme.HudLime
 import com.example.ui.theme.HudMagenta
 import com.example.ui.theme.HudTeal
-import com.example.ui.theme.HudViolet
 
 enum class HudModule(
     val id: String,
@@ -72,26 +69,6 @@ enum class HudModule(
         secondaryColor = HudTeal,
         icon = Icons.Filled.Badge
     ),
-    IRANCELL(
-        id = "irancell",
-        code = "TEL-MTN",
-        labelRes = R.string.node_irancell,
-        displayLabel = "Irancell",
-        sectorTag = "TEL-CELL // IRANCELL",
-        primaryColor = HudViolet,
-        secondaryColor = HudMagenta,
-        icon = Icons.Filled.PhoneAndroid
-    ),
-    TELEGRAM(
-        id = "telegram",
-        code = "MSG-TG",
-        labelRes = R.string.node_telegram,
-        displayLabel = "Telegram",
-        sectorTag = "MSG-RELAY // TELEGRAM",
-        primaryColor = HudTeal,
-        secondaryColor = HudCyan,
-        icon = Icons.AutoMirrored.Filled.Send
-    ),
     BASIJ(
         id = "basij",
         code = "SEC-BASIJ",
@@ -123,10 +100,6 @@ enum class HudModule(
                 "AccountNumber, DefineationNumber, FullName, CardNumber, Password_Hint, user_email_address, Passw, user_phone_number, Member, Username, DefineNum_Old, ID_Branch"
             CITIZEN ->
                 "FULLNAME, BIRTHDAY, National ID, Postal Code, Phone, City, Address"
-            IRANCELL ->
-                "FULL_NAME, NATIONAL_CODE, MOBILE, ACCOUNT_HANDLE, CITY, ADDRESS"
-            TELEGRAM ->
-                "account_id;phone;username;first_name;last_name  [FILTER: phone starts with (989)]"
             BASIJ ->
                 "name,dob,national_id,address,postal_code"
             ENTEZAMI ->

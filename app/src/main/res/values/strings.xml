@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Nexus HUD</string>
+    <string name="app_name">Nullemperor</string>
     <string name="hud_subtitle">MULTI-SPECTRUM IDENTITY TELEMETRY CONSOLE</string>
     <string name="developer_credit">This application was developed by Nullemperor.</string>
     <string name="join_telegram">JOIN TELEGRAM CHANNEL</string>
@@ -21,7 +21,7 @@
     <string name="btn_fingerprint_scan">SCAN FINGERPRINT</string>
     <string name="btn_unlock_password">AUTHENTICATE CIPHER</string>
     <string name="err_invalid_password">Access denied: Invalid master cipher.</string>
-    <string name="biometric_prompt_title">Nexus HUD Biometric Access</string>
+    <string name="biometric_prompt_title">Nullemperor Biometric Access</string>
     <string name="biometric_prompt_subtitle">Scan fingerprint to unlock Multicolor HUD Console</string>
     <string name="biometric_prompt_negative">Use Master Password</string>
     <string name="biometric_unavailable_hint">Hardware fingerprint sensor unavailable or unconfigured on this device — use Master Password below.</string>
@@ -31,8 +31,6 @@
     <string name="node_bank_melat">BankMelat</string>
     <string name="node_bank_saderat">BankSaderat</string>
     <string name="node_citizen">Citizen</string>
-    <string name="node_irancell">Irancell</string>
-    <string name="node_telegram">Telegram</string>
     <string name="node_basij">Basij</string>
     <string name="node_entezami">Entezami</string>
     <string name="total_records_label">INDEXED RECORDS</string>
@@ -72,17 +70,17 @@
     <string name="universal_empty_title">ZERO RECORDS MATCHED ACROSS DATABASES</string>
     <string name="universal_empty_tip">Try searching with national code, mobile phone (e.g. 0912 or 98), card number, username, or full name.</string>
     <string name="btn_jump_to_module">OPEN IN %1$s DATABASE</string>
-    <string name="databases_grid_header">DATABASE NODES // 8 SECTORS READY</string>
+    <string name="databases_grid_header">DATABASE NODES // 6 SECTORS READY</string>
 
     <!-- Database Backup and Fast Restore -->
     <string name="backup_section_title">DATABASE BACKUP &amp; FAST RESTORE MATRIX</string>
-    <string name="backup_section_subtitle">Backup all 8 app databases into one single file (.nexusbak) or restore with ultra-high speed WAL streaming</string>
+    <string name="backup_section_subtitle">Backup all 6 app databases into one single file (.nexusbak) or restore with ultra-high speed WAL streaming</string>
     <string name="btn_export_all_backup">EXPORT ALL TO SINGLE BACKUP FILE</string>
     <string name="btn_fast_restore_backup">FAST RESTORE ALL FROM BACKUP</string>
     <string name="btn_abort_backup">ABORT PIPELINE</string>
     <string name="btn_dismiss_backup">DISMISS NOTIFICATION</string>
     <string name="restore_dialog_title">FAST RESTORE DATABASE ARCHIVE</string>
-    <string name="restore_dialog_message">Choose how to restore the backup file into the 8 database nodes:</string>
+    <string name="restore_dialog_message">Choose how to restore the backup file into the 6 database nodes:</string>
     <string name="btn_restore_clean">CLEAN RESTORE (OVERWRITE ALL)</string>
     <string name="btn_restore_merge">MERGE (KEEP EXISTING RECORDS)</string>
     <string name="btn_dialog_cancel">CANCEL</string>

@@ -105,7 +105,7 @@ internal class BoundedLineReader(
     private val reader: Reader,
     private val maxLineChars: Int = 8_192
 ) : Closeable {
-    private val buffer = CharArray(262_144)
+    private val buffer = CharArray(524_288)
     private var pos = 0
     private var limit = 0
     private var skipNextLf = false
@@ -617,7 +617,6 @@ object CsvSchemaParser {
             "bank_melat" -> parseBankMelatPositional(cols, index)
             "bank_saderat" -> parseBankSaderatPositional(cols, index)
             "citizen" -> parseCitizenPositional(cols, index)
-            "telegram" -> parseTelegramPositional(cols, index)
             "basij" -> parseBasijPositional(cols, index)
             "entezami" -> parseEntezamiPositional(cols, index)
             else -> {
@@ -630,83 +629,7 @@ object CsvSchemaParser {
         }
     }
 
-    private fun parseTelegramPositional(cols: List<String>, index: Int): ParsedCsvIdentityRow {
-        val phoneColIdx = detectTelegramPhoneCol(cols)
-        val phone = cols.getOrNull(phoneColIdx).orEmpty().ifEmpty { "-" }
-        val accountId = if (phoneColIdx == 1) {
-            cols.colOrDash(0)
-        } else if (phoneColIdx == 0) {
-            cols.getOrNull(1).orEmpty().ifEmpty { "-" }
-        } else {
-            cols.colOrDash(0)
-        }
-        val rawUsername = when (phoneColIdx) {
-            1 -> cols.getOrNull(2).orEmpty()
-            0 -> cols.getOrNull(1).orEmpty()
-            else -> cols.getOrNull(1).orEmpty()
-        }
-        val username = when {
-            rawUsername.isEmpty() || rawUsername == "-" -> "-"
-            rawUsername.startsWith("@") -> rawUsername
-            else -> "@$rawUsername"
-        }
-        val firstName = when (phoneColIdx) {
-            1 -> cols.getOrNull(3).orEmpty()
-            0 -> cols.getOrNull(2).orEmpty()
-            else -> cols.getOrNull(3).orEmpty()
-        }
-        val lastName = when (phoneColIdx) {
-            1 -> cols.getOrNull(4).orEmpty()
-            0 -> cols.getOrNull(3).orEmpty()
-            else -> cols.getOrNull(4).orEmpty()
-        }
-        val hasFirst = firstName.isNotEmpty() && firstName != "-"
-        val hasLast = lastName.isNotEmpty() && lastName != "-"
-        val combinedName = when {
-            hasFirst && hasLast -> "$firstName $lastName"
-            hasFirst -> firstName
-            hasLast -> lastName
-            username != "-" -> username
-            else -> "TG-User-${index + 1}"
-        }
-
-        val detailsSb = StringBuilder(48)
-        if (firstName.isNotEmpty() && firstName != "-") {
-            detailsSb.append("FIRST: ").append(firstName)
-        }
-        if (lastName.isNotEmpty() && lastName != "-") {
-            if (detailsSb.isNotEmpty()) detailsSb.append(" • ")
-            detailsSb.append("LAST: ").append(lastName)
-        }
-        val tailStart = if (phoneColIdx == 0) 4 else 5
-        if (cols.size > tailStart) {
-            if (detailsSb.isNotEmpty()) detailsSb.append(" • ")
-            for (k in tailStart until cols.size) {
-                if (k > tailStart) detailsSb.append(" | ")
-                detailsSb.append(cols[k])
-            }
-        }
-
-        return ParsedCsvIdentityRow(
-            originalIndex = index,
-            fullName = combinedName,
-            nationalCode = accountId,
-            phone = phone,
-            accountOrHandle = accountId,
-            username = username,
-            rawDetails = detailsSb.toString()
-        )
-    }
-
-    /**
-     * Module-specific import filter:
-     * In the Telegram section (`telegram`), import records whose `phone` field starts with
-     * `(98)`, `(+98)`, `98`, or `989` (handling quotes, spaces, dashes, leading '+', and Persian/Arabic digits).
-     */
-    fun passesModuleImportFilter(moduleId: String, row: ParsedCsvIdentityRow): Boolean {
-        if (moduleId != "telegram") return true
-        return hasIranPhonePrefix(row.phone)
-    }
+    fun passesModuleImportFilter(moduleId: String, row: ParsedCsvIdentityRow): Boolean = true
 
     private fun parseBankMeliPositional(cols: List<String>, index: Int): ParsedCsvIdentityRow {
         // (0:NATIONAL_CODE, 1:CARD_NO, 2:FULL_NAME, 3:BIRTH_DATE, 4:MOBILE)
@@ -967,16 +890,7 @@ object CsvSchemaParser {
                 ROLE_CARD_NUMBER -> if (cardNumber.isEmpty()) cardNumber = value
                 ROLE_PHONE -> if (phone.isEmpty()) phone = value
                 ROLE_EMAIL -> if (email.isEmpty()) email = value
-                ROLE_USERNAME -> {
-                    if (username.isEmpty()) {
-                        username = if (moduleId == "telegram" && !value.startsWith("@") && value != "-") {
-                            "@$value"
-                        } else {
-                            value
-                        }
-                    }
-                    if (accountNumber.isEmpty() && moduleId == "telegram") accountNumber = value
-                }
+                ROLE_USERNAME -> if (username.isEmpty()) username = value
                 ROLE_MEMBER_CODE -> if (memberCode.isEmpty()) memberCode = value
                 ROLE_BRANCH_ID -> if (branchId.isEmpty()) branchId = value
                 ROLE_DEF_NUM_OLD -> if (defNumOld.isEmpty()) defNumOld = value
@@ -1031,7 +945,6 @@ object CsvSchemaParser {
                 "bank_melat" -> parseBankMelatPositional(cols, index)
                 "bank_saderat" -> parseBankSaderatPositional(cols, index)
                 "citizen" -> parseCitizenPositional(cols, index)
-                "telegram" -> parseTelegramPositional(cols, index)
                 "basij" -> parseBasijPositional(cols, index)
                 "entezami" -> parseEntezamiPositional(cols, index)
                 else -> parseGenericPositional(cols, index, rawLine)
@@ -1123,8 +1036,8 @@ class HighSpeedCsvImportEngine(
         }.asCoroutineDispatcher()
 
     companion object {
-        private const val RAW_SCAN_CHUNK_SIZE = 15_000
-        private const val SQL_COMMIT_BATCH_SIZE = 15_000
+        private const val RAW_SCAN_CHUNK_SIZE = 25_000
+        private const val SQL_COMMIT_BATCH_SIZE = 25_000
         private const val UI_TELEMETRY_MIN_INTERVAL_MS = 100L
     }
 
@@ -1181,11 +1094,11 @@ class HighSpeedCsvImportEngine(
             val pendingEntities = ArrayList<IdentityEntity>(SQL_COMMIT_BATCH_SIZE * 2)
             val db = database.openHelper.writableDatabase
             try {
-                // Flash-speed bulk loading SQLite PRAGMAs (eliminates fsync disk bottleneck on 20M rows)
+                // Flash-speed bulk loading SQLite PRAGMAs (eliminates fsync disk bottleneck on 10M+ rows)
                 try {
                     db.execSQL("PRAGMA synchronous = OFF")
                     db.execSQL("PRAGMA temp_store = MEMORY")
-                    db.execSQL("PRAGMA cache_size = -64000") // 64 MB RAM cache
+                    db.execSQL("PRAGMA cache_size = -131072") // 128 MB RAM cache
                 } catch (_: Exception) {}
 
                 val (fileName, fileSizeBytes) = resolveFileMeta(uri)
@@ -1206,7 +1119,7 @@ class HighSpeedCsvImportEngine(
 
                 val rawStream = context.contentResolver.openInputStream(uri)
                     ?: throw IllegalStateException("Unable to open selected CSV stream.")
-                val bufferedStream = BufferedInputStream(rawStream, 1_048_576) // 1 MB high-throughput stream buffer
+                val bufferedStream = BufferedInputStream(rawStream, 2_097_152) // 2 MB ultra-throughput stream buffer
                 val detectedCharset = detectCsvCharset(bufferedStream)
                 val decoder = detectedCharset.newDecoder()
                     .onMalformedInput(CodingErrorAction.REPLACE)
@@ -1224,7 +1137,6 @@ class HighSpeedCsvImportEngine(
                 var compiledHeaders: CompiledHeaderMap? = null
                 var fileDelimiter = '\u0000'
                 var checkedFirstNonEmptyLine = false
-                var detectedPhoneCol = 1
                 val chunkBuffer = ArrayList<String>(RAW_SCAN_CHUNK_SIZE)
 
                 BoundedLineReader(InputStreamReader(bufferedStream, decoder), maxLineChars = 8_192).use { reader ->
@@ -1252,31 +1164,11 @@ class HighSpeedCsvImportEngine(
                                     val headerCols = CsvSchemaParser.splitCsvLineFast(trimmed, fileDelimiter)
                                     val compiled = CsvSchemaParser.compileHeaders(headerCols)
                                     compiledHeaders = compiled
-                                    detectedPhoneCol = if (compiled.phoneColIndex >= 0) compiled.phoneColIndex else 1
-                                } else {
-                                    val cols = CsvSchemaParser.splitCsvLineFast(trimmed, fileDelimiter)
-                                    detectedPhoneCol = CsvSchemaParser.detectTelegramPhoneCol(cols)
-                                    if (moduleId == "telegram") {
-                                        val candidatePhone = cols.getOrNull(detectedPhoneCol).orEmpty()
-                                        if (!CsvSchemaParser.hasIranPhonePrefix(candidatePhone)) {
-                                            skippedRows.incrementAndGet()
-                                        } else {
-                                            chunkBuffer.add(trimmed)
-                                        }
-                                    } else {
-                                        chunkBuffer.add(trimmed)
-                                    }
-                                }
-                            } else {
-                                val tgPhoneIdx = detectedPhoneCol
-                                if (moduleId == "telegram" &&
-                                    tgPhoneIdx >= 0 &&
-                                    !CsvSchemaParser.rawTelegramLinePasses98Filter(trimmed, tgPhoneIdx, fileDelimiter)
-                                ) {
-                                    skippedRows.incrementAndGet()
                                 } else {
                                     chunkBuffer.add(trimmed)
                                 }
+                            } else {
+                                chunkBuffer.add(trimmed)
                             }
                         }
 
@@ -1300,22 +1192,6 @@ class HighSpeedCsvImportEngine(
                                 activeElapsedMs = activeDurationAccumulatorMs + (nowMs - lastResumeTimestampMs),
                                 lastUiUpdateMs = lastUiUpdateMs,
                                 forceFlush = false
-                            )
-                        } else if (moduleId == "telegram" && nowMs - lastUiUpdateMs >= 250L) {
-                            // Keep progress bar smooth even when scanning millions of foreign non-98 rows
-                            lastUiUpdateMs = nowMs
-                            emitProgressSnapshot(
-                                batchIndex = batchCounter,
-                                currentTotal = processedRows.get(),
-                                skippedTotal = skippedRows.get(),
-                                moduleId = moduleId,
-                                processedBytes = processedBytes.get(),
-                                totalBytes = fileSizeBytes,
-                                explicitTotalRecords = 0L,
-                                activeElapsedMs = activeDurationAccumulatorMs + (nowMs - lastResumeTimestampMs),
-                                rendererName = gpuAccelerator.rendererInfo,
-                                hardwareActive = gpuAccelerator.isHardwareBound,
-                                computeMicros = 0L
                             )
                         }
 
@@ -1353,15 +1229,10 @@ class HighSpeedCsvImportEngine(
                 }
 
                 val finalCount = processedRows.get()
-                val totalSkipped = skippedRows.get()
                 val totalActiveMs = (activeDurationAccumulatorMs +
                     (System.currentTimeMillis() - lastResumeTimestampMs)).coerceAtLeast(1L)
                 val avgRps = (finalCount * 1000L) / totalActiveMs
-                val skipSuffix = if (moduleId == "telegram" && totalSkipped > 0L) {
-                    " (FILTERED OUT $totalSkipped NON-98 ROWS)"
-                } else {
-                    ""
-                }
+                val skipSuffix = ""
 
                 _state.update {
                     it.copy(
@@ -1435,11 +1306,12 @@ class HighSpeedCsvImportEngine(
                     "bank_melat" -> 148L
                     "bank_saderat" -> 152L
                     "citizen" -> 108L
-                    "telegram" -> 64L
+                    "basij" -> 96L
+                    "entezami" -> 118L
                     else -> 84L
                 }
                 val totalBytes = targetRecords.toLong() * avgBytesPerRow
-                val delimiter = if (moduleId == "telegram") ';' else ','
+                val delimiter = ','
 
                 val schemaHeader = when (moduleId) {
                     "bank_meli" -> listOf(
@@ -1458,9 +1330,6 @@ class HighSpeedCsvImportEngine(
                     "citizen" -> listOf(
                         "FULLNAME", "BIRTHDAY", "National ID", "Postal Code",
                         "Phone", "City", "Address"
-                    )
-                    "telegram" -> listOf(
-                        "account_id", "phone", "username", "first_name", "last_name"
                     )
                     "basij" -> listOf(
                         "name", "dob", "national_id", "address", "postal_code"
@@ -1607,14 +1476,6 @@ class HighSpeedCsvImportEngine(
                                             sb.append("\"District ").append((globalIdx % 22) + 1)
                                                 .append(" Blvd ").append(globalIdx % 90)
                                                 .append(" Unit ").append((globalIdx % 16) + 1).append('"')
-                                        }
-                                        "telegram" -> {
-                                            sb.append(500000000L + globalIdx * 17L).append(';')
-                                            sb.append("989")
-                                            appendZeroPadded(sb, mobSuffix, 9).append(';')
-                                            sb.append(fn.lowercase()).append('_').append(ln.lowercase())
-                                                .append('_').append(globalIdx % 9999).append(';')
-                                            sb.append(fn).append(';').append(ln)
                                         }
                                         "basij" -> {
                                             // (name, dob, national_id, address, postal_code)
@@ -1900,8 +1761,7 @@ class HighSpeedCsvImportEngine(
                     val cleanedPhone = if (row.phone.isEmpty() || row.phone == "-") {
                         "-"
                     } else {
-                        val norm = TextNormalizer.normalizeForSearch(row.phone)
-                        if (moduleId == "telegram") norm.trimStart('+') else norm
+                        TextNormalizer.normalizeForSearch(row.phone)
                     }.ifEmpty { "-" }
 
                     pendingEntities.add(
@@ -1999,11 +1859,7 @@ class HighSpeedCsvImportEngine(
 
         val simulatedDynamicCpuLoad = (72 + (batchIndex * 7) % 26).coerceIn(65, 99)
         val simulatedDynamicGpuLoad = (58 + (batchIndex * 11) % 36).coerceIn(50, 96)
-        val filterNote = if (moduleId == "telegram" && skippedTotal > 0L) {
-            " | FILTERED $skippedTotal NON-98"
-        } else {
-            ""
-        }
+        val filterNote = ""
 
         _state.update {
             if (it.status == ImportStatus.PAUSED) it

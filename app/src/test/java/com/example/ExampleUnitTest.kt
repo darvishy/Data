@@ -11,14 +11,12 @@ import org.junit.Test
 class ExampleUnitTest {
 
     @Test
-    fun `verify 8 HUD modules have clean unnumbered names without BankSepah or BankTejarat`() {
+    fun `verify 6 HUD modules have clean unnumbered names`() {
         val expected = listOf(
             "BankMeli",
             "BankMelat",
             "BankSaderat",
             "Citizen",
-            "Irancell",
-            "Telegram",
             "Basij",
             "Entezami"
         )
@@ -135,92 +133,10 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun `verify Telegram semicolon 5 column CSV format with and without header`() {
-        val headerLine = "account_id;phone;username;first_name;last_name"
-        assertTrue(CsvSchemaParser.looksLikeCsvHeader(headerLine))
-        val headers = CsvSchemaParser.splitCsvLineFast(headerLine)
-
-        val rowLine = "784512963;989123456789;nullemperor_dev;Aria;Parsa"
-
-        val parsedHeader = CsvSchemaParser.parseIdentityCsvRow("telegram", rowLine, headers, 0)
-        val parsedPositional = CsvSchemaParser.parseIdentityCsvRow("telegram", rowLine, null, 0)
-
-        for (parsed in listOf(parsedHeader, parsedPositional)) {
-            assertEquals("784512963", parsed.accountOrHandle)
-            assertEquals("784512963", parsed.nationalCode)
-            assertEquals("989123456789", parsed.phone)
-            assertEquals("@nullemperor_dev", parsed.username)
-            assertEquals("Aria Parsa", parsed.fullName)
-            assertTrue(CsvSchemaParser.passesModuleImportFilter("telegram", parsed))
+    fun `verify all 6 HUD modules expectedCsvSchema non-empty`() {
+        for (m in HudModule.entries) {
+            assertTrue(m.expectedCsvSchema.isNotEmpty())
         }
-
-        val foreignRow = CsvSchemaParser.parseIdentityCsvRow(
-            "telegram",
-            "784512999;14155552671;foreign_user;John;Doe",
-            headers,
-            1
-        )
-        assertTrue(!CsvSchemaParser.passesModuleImportFilter("telegram", foreignRow))
-
-        val emptyPhoneRow = CsvSchemaParser.parseIdentityCsvRow(
-            "telegram",
-            "784513000;;no_phone_user;Sara;Rad",
-            headers,
-            2
-        )
-        assertTrue(!CsvSchemaParser.passesModuleImportFilter("telegram", emptyPhoneRow))
-
-        // Verify Iranian numbers starting with (98), (+98), 98, or 989 pass correctly
-        val iranLandlineRow = CsvSchemaParser.parseIdentityCsvRow(
-            "telegram",
-            "784513001;982188776655;tehran_landline;Reza;Tehrani",
-            headers,
-            3
-        )
-        assertTrue(CsvSchemaParser.passesModuleImportFilter("telegram", iranLandlineRow))
-
-        val paren98Row = CsvSchemaParser.parseIdentityCsvRow(
-            "telegram",
-            "784513002;(98)9123456789;iran_user;Ali;Rezaei",
-            headers,
-            4
-        )
-        assertTrue(CsvSchemaParser.passesModuleImportFilter("telegram", paren98Row))
-
-        val parenPlus98Row = CsvSchemaParser.parseIdentityCsvRow(
-            "telegram",
-            "784513003;(+98)9123456789;iran_user;Hassan;Moradi",
-            headers,
-            5
-        )
-        assertTrue(CsvSchemaParser.passesModuleImportFilter("telegram", parenPlus98Row))
-
-        // Verify zero-allocation raw line pre-filter for all requested formats: (98), (+98), (989), 98, +98, 989
-        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784512963;989123456789;user;Aria;Parsa", 1, ';'))
-        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784512963;\"+989123456789\";user;Aria;Parsa", 1, ';'))
-        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784512963;\"(98)9123456789\";user;Aria;Parsa", 1, ';'))
-        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784512963;\"(+98)9123456789\";user;Aria;Parsa", 1, ';'))
-        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784512963;\"(989)123456789\";user;Aria;Parsa", 1, ';'))
-        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784512963;\"+98\";user;Aria;Parsa", 1, ';'))
-        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784512963;۹۸۹۱۲۳۴۵۶۷۸۹;user;Aria;Parsa", 1, ';'))
-        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784513001;982188776655;landline;Reza;Tehrani", 1, ';'))
-        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784513001;+982188776655;landline;Reza;Tehrani", 1, ';'))
-        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784513001;00989123456789;landline;Reza;Tehrani", 1, ';'))
-
-        // Verify foreign and empty numbers are strictly rejected
-        assertTrue(!CsvSchemaParser.rawTelegramLinePasses98Filter("784512999;14155552671;foreign;John;Doe", 1, ';'))
-        assertTrue(!CsvSchemaParser.rawTelegramLinePasses98Filter("784512999;+447911122333;uk_foreign;Alice;Smith", 1, ';'))
-        assertTrue(!CsvSchemaParser.rawTelegramLinePasses98Filter("784513000;;989_username_not_phone;Sara;Rad", 1, ';'))
-
-        // Auto-detection of phone at col 0: (phone;username;first_name;last_name)
-        val col0Row = CsvSchemaParser.parseIdentityCsvRow(
-            "telegram",
-            "989123456789;nullemperor_dev;Aria;Parsa",
-            null,
-            0
-        )
-        assertEquals("989123456789", col0Row.phone)
-        assertTrue(CsvSchemaParser.passesModuleImportFilter("telegram", col0Row))
     }
 
     @Test
@@ -342,8 +258,8 @@ class ExampleUnitTest {
             "bank_melat" to HudModule.BANK_MELAT,
             "bank_saderat" to HudModule.BANK_SADERAT,
             "citizen" to HudModule.CITIZEN,
-            "irancell" to HudModule.IRANCELL,
-            "telegram" to HudModule.TELEGRAM
+            "basij" to HudModule.BASIJ,
+            "entezami" to HudModule.ENTEZAMI
         )
         for ((id, expected) in expectedModules) {
             assertEquals(expected, HudModule.fromId(id))
@@ -381,12 +297,13 @@ class ExampleUnitTest {
             ),
             com.example.data.IdentityEntity(
                 id = 2L,
-                moduleId = "telegram",
+                moduleId = "basij",
                 fullName = "Kian Rad",
-                nationalCode = "784512963",
-                phone = "989123456789",
-                accountOrHandle = "784512963",
-                username = "@kian_rad",
+                nationalCode = "0012345678",
+                phone = "-",
+                accountOrHandle = "-",
+                address = "Tehran",
+                postalCode = "1415512345",
                 gpuSignatureHash = 654321L,
                 importedAt = 10000L
             )
@@ -489,9 +406,9 @@ class ExampleUnitTest {
         assertEquals("bank_meli", restored[0].moduleId)
         assertEquals("Aria Parsa", restored[0].fullName)
         assertEquals("0019283746", restored[0].nationalCode)
-        assertEquals("telegram", restored[1].moduleId)
+        assertEquals("basij", restored[1].moduleId)
         assertEquals("Kian Rad", restored[1].fullName)
-        assertEquals("@kian_rad", restored[1].username)
+        assertEquals("0012345678", restored[1].nationalCode)
     }
 }
 
