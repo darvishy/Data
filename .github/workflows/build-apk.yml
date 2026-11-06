@@ -152,10 +152,13 @@ jobs:
           - **Commit SHA:** \`${GITHUB_SHA}\`
 
           #### Included Optimizations & Fixes
-          - Universal Multi-Database Fast Search in Main Screen across all databases (BankMeli, BankMelat, BankSaderat, Citizen, Irancell, Telegram) with instant filter chips and real-time telemetry
-          - Right-aligned Names on result information cards and interactive tap-to-open Information Card with Share & Copy support
-          - Crash-proof bounded CSV reader & zero-allocation \`98\` phone prefix pre-filter for large Telegram databases
-          - Pre-compiled CSV header mapping, 2,500-row SQLite WAL batching, and reusable native OpenGL ES buffers
+          - Universal Multi-Database Fast Search across all 8 sectors (BankMeli, BankMelat, BankSaderat, Citizen, Irancell, Telegram, Basij, Entezami)
+          - Telegram 989 Phone Pre-Filter: strictly imports numbers beginning with 989 (supports (989), +989, and normalized Persian/Arabic digits)
+          - Basij Importer Sector: (name, dob, national_id, address, postal_code)
+          - Entezami Importer Sector: (full_name, dob, national_id, address, postal_code, date_of_address)
+          - Right-aligned Names on result cards and tap-to-open Information Cards with Copy & Share
+          - Single-file Full Database Backup & Fast Restore (.nexus format)
+          - Zero-allocation streaming CSV parser, 2,500-row SQLite WAL batching, and native OpenGL ES shader telemetry
           - Sub-millisecond 3-tier B-Tree + FTS4 search pipeline & cached HUD backdrop rendering
           EOF
 

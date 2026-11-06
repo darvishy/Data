@@ -170,23 +170,57 @@ class ExampleUnitTest {
         )
         assertTrue(!CsvSchemaParser.passesModuleImportFilter("telegram", emptyPhoneRow))
 
-        // Verify non-989 Iranian numbers (e.g. landline 9821...) are strictly rejected
-        val nonMobileRow = CsvSchemaParser.parseIdentityCsvRow(
+        // Verify Iranian numbers starting with (98), (+98), 98, or 989 pass correctly
+        val iranLandlineRow = CsvSchemaParser.parseIdentityCsvRow(
             "telegram",
             "784513001;982188776655;tehran_landline;Reza;Tehrani",
             headers,
             3
         )
-        assertTrue(!CsvSchemaParser.passesModuleImportFilter("telegram", nonMobileRow))
+        assertTrue(CsvSchemaParser.passesModuleImportFilter("telegram", iranLandlineRow))
 
-        // Verify zero-allocation raw line 989 pre-filter (including Persian digits, quotes, '+', and empty-column guard)
-        assertTrue(CsvSchemaParser.rawTelegramLinePasses989Filter("784512963;989123456789;user;Aria;Parsa", 1, ';'))
-        assertTrue(CsvSchemaParser.rawTelegramLinePasses989Filter("784512963;\"+989123456789\";user;Aria;Parsa", 1, ';'))
-        assertTrue(CsvSchemaParser.rawTelegramLinePasses989Filter("784512963;\"(989)123456789\";user;Aria;Parsa", 1, ';'))
-        assertTrue(CsvSchemaParser.rawTelegramLinePasses989Filter("784512963;۹۸۹۱۲۳۴۵۶۷۸۹;user;Aria;Parsa", 1, ';'))
-        assertTrue(!CsvSchemaParser.rawTelegramLinePasses989Filter("784512999;14155552671;foreign;John;Doe", 1, ';'))
-        assertTrue(!CsvSchemaParser.rawTelegramLinePasses989Filter("784513001;982188776655;landline;Reza;Tehrani", 1, ';'))
-        assertTrue(!CsvSchemaParser.rawTelegramLinePasses989Filter("784513000;;989_username_not_phone;Sara;Rad", 1, ';'))
+        val paren98Row = CsvSchemaParser.parseIdentityCsvRow(
+            "telegram",
+            "784513002;(98)9123456789;iran_user;Ali;Rezaei",
+            headers,
+            4
+        )
+        assertTrue(CsvSchemaParser.passesModuleImportFilter("telegram", paren98Row))
+
+        val parenPlus98Row = CsvSchemaParser.parseIdentityCsvRow(
+            "telegram",
+            "784513003;(+98)9123456789;iran_user;Hassan;Moradi",
+            headers,
+            5
+        )
+        assertTrue(CsvSchemaParser.passesModuleImportFilter("telegram", parenPlus98Row))
+
+        // Verify zero-allocation raw line pre-filter for all requested formats: (98), (+98), (989), 98, +98, 989
+        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784512963;989123456789;user;Aria;Parsa", 1, ';'))
+        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784512963;\"+989123456789\";user;Aria;Parsa", 1, ';'))
+        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784512963;\"(98)9123456789\";user;Aria;Parsa", 1, ';'))
+        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784512963;\"(+98)9123456789\";user;Aria;Parsa", 1, ';'))
+        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784512963;\"(989)123456789\";user;Aria;Parsa", 1, ';'))
+        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784512963;\"+98\";user;Aria;Parsa", 1, ';'))
+        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784512963;۹۸۹۱۲۳۴۵۶۷۸۹;user;Aria;Parsa", 1, ';'))
+        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784513001;982188776655;landline;Reza;Tehrani", 1, ';'))
+        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784513001;+982188776655;landline;Reza;Tehrani", 1, ';'))
+        assertTrue(CsvSchemaParser.rawTelegramLinePasses98Filter("784513001;00989123456789;landline;Reza;Tehrani", 1, ';'))
+
+        // Verify foreign and empty numbers are strictly rejected
+        assertTrue(!CsvSchemaParser.rawTelegramLinePasses98Filter("784512999;14155552671;foreign;John;Doe", 1, ';'))
+        assertTrue(!CsvSchemaParser.rawTelegramLinePasses98Filter("784512999;+447911122333;uk_foreign;Alice;Smith", 1, ';'))
+        assertTrue(!CsvSchemaParser.rawTelegramLinePasses98Filter("784513000;;989_username_not_phone;Sara;Rad", 1, ';'))
+
+        // Auto-detection of phone at col 0: (phone;username;first_name;last_name)
+        val col0Row = CsvSchemaParser.parseIdentityCsvRow(
+            "telegram",
+            "989123456789;nullemperor_dev;Aria;Parsa",
+            null,
+            0
+        )
+        assertEquals("989123456789", col0Row.phone)
+        assertTrue(CsvSchemaParser.passesModuleImportFilter("telegram", col0Row))
     }
 
     @Test

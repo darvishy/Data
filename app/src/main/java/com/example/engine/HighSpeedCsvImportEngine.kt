@@ -3,6 +3,8 @@ package com.example.engine
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.sqlite.db.SupportSQLiteDatabase
+import androidx.sqlite.db.SupportSQLiteStatement
 import com.example.data.AppDatabase
 import com.example.data.IdentityEntity
 import com.example.data.TextNormalizer
@@ -103,7 +105,7 @@ internal class BoundedLineReader(
     private val reader: Reader,
     private val maxLineChars: Int = 8_192
 ) : Closeable {
-    private val buffer = CharArray(65_536)
+    private val buffer = CharArray(262_144)
     private var pos = 0
     private var limit = 0
     private var skipNextLf = false
@@ -204,7 +206,28 @@ object CsvSchemaParser {
 
     fun looksLikeCsvHeader(firstLine: String): Boolean {
         val clean = firstLine.removePrefix("\uFEFF").lowercase()
-        return clean.contains("national_code") ||
+        // If line has many digits in the first 64 chars, it is a data row, not a header
+        var digitCount = 0
+        val sampleLen = minOf(clean.length, 64)
+        for (i in 0 until sampleLen) {
+            if (clean[i].isDigit()) digitCount++
+        }
+        if (digitCount > 6) return false
+
+        return clean.contains("phone") ||
+            clean.contains("mobile") ||
+            clean.contains("tel") ||
+            clean.contains("cell") ||
+            clean.contains("account_id") ||
+            clean.contains("accountid") ||
+            clean.contains("user_id") ||
+            clean.contains("userid") ||
+            clean.contains("tg_id") ||
+            clean.contains("telegram_id") ||
+            clean.contains("username") ||
+            clean.contains("first_name") ||
+            clean.contains("last_name") ||
+            clean.contains("national_code") ||
             clean.contains("national id") ||
             clean.contains("national_id") ||
             clean.contains("fullname") ||
@@ -227,10 +250,10 @@ object CsvSchemaParser {
             clean.contains("card_no") ||
             clean.contains("birthday") ||
             clean.contains("birth_date") ||
-            clean.contains("account_id") ||
-            clean.contains("first_name") ||
-            clean.contains("last_name") ||
-            (clean.contains("name") && (clean.contains("phone") || clean.contains("mobile") || clean.contains("address")))
+            clean.contains("address") ||
+            clean.contains("email") ||
+            clean.contains("mail") ||
+            (clean.contains("name") && (clean.contains("id") || clean.contains("code")))
     }
 
     fun detectDelimiter(line: String): Char {
@@ -336,7 +359,7 @@ object CsvSchemaParser {
                 "postal_code", "postalcode", "zip", "zip_code", "postcode" -> ROLE_POSTAL_CODE
                 "address", "home_address", "street_address" -> ROLE_ADDRESS
                 "card_no", "card_number", "cardnumber", "card", "pan" -> ROLE_CARD_NUMBER
-                "mobile", "phone", "phone_number", "user_phone_number", "mobile_no", "tel", "cell" -> {
+                "mobile", "phone", "phone_number", "user_phone_number", "mobile_no", "tel", "cell", "mob", "telephone", "contact", "phone_no", "phoneno", "mobile_num", "phone_num", "number" -> {
                     if (phoneIdx == -1) phoneIdx = i
                     ROLE_PHONE
                 }
@@ -383,49 +406,79 @@ object CsvSchemaParser {
     }
 
     /**
-     * Zero-allocation check whether a phone string begins with `989` in its first 3 digits
-     * (after skipping whitespace, BOM, quotes, parentheses, and leading `+`, and normalizing Persian/Arabic digits).
+     * Zero-allocation check whether a phone string begins with `98`, `+98`, `(98)`, `(+98)`, or `989`
+     * (handling surrounding quotes, parentheses, spaces, dashes, leading '+', international '00' or '0' prefixes,
+     * and normalizing Persian/Arabic digits).
      */
-    fun hasIran989Prefix(rawPhone: String): Boolean {
+    fun hasIranPhonePrefix(rawPhone: String): Boolean {
         val len = rawPhone.length
+        if (len < 2) return false
         var i = 0
         while (i < len) {
             val c = rawPhone[i]
-            if (c <= ' ' || c == '+' || c == '(' || c == ')' || c == '"' || c == '\'' || c == '\uFEFF' || c == '\u200E' || c == '\u200F') {
+            if (c <= ' ' || c == '"' || c == '\'' || c == '+' || c == '(' || c == ')' || c == '-' ||
+                c == '\uFEFF' || c == '\u200E' || c == '\u200F'
+            ) {
                 i++
             } else {
                 break
             }
         }
-        if (i + 2 >= len) return false
+        if (i >= len) return false
+
+        // Check for international dial code prefix "00" or single "0" before 98
+        if (i + 3 < len && toAsciiDigitOrChar(rawPhone[i]) == '0' && toAsciiDigitOrChar(rawPhone[i + 1]) == '0') {
+            i += 2
+        } else if (i + 2 < len && toAsciiDigitOrChar(rawPhone[i]) == '0' &&
+            toAsciiDigitOrChar(rawPhone[i + 1]) == '9' && toAsciiDigitOrChar(rawPhone[i + 2]) == '8'
+        ) {
+            i += 1
+        }
+
+        while (i < len) {
+            val c = rawPhone[i]
+            if (c <= ' ' || c == '-' || c == '(' || c == ')' || c == '+') {
+                i++
+            } else {
+                break
+            }
+        }
+
+        if (i + 1 >= len) return false
         val d0 = toAsciiDigitOrChar(rawPhone[i])
         val d1 = toAsciiDigitOrChar(rawPhone[i + 1])
-        val d2 = toAsciiDigitOrChar(rawPhone[i + 2])
-        return d0 == '9' && d1 == '8' && d2 == '9'
+        return d0 == '9' && d1 == '8'
     }
 
-    fun hasIran98Prefix(rawPhone: String): Boolean = hasIran989Prefix(rawPhone)
+    fun hasIran98Prefix(rawPhone: String): Boolean = hasIranPhonePrefix(rawPhone)
+    fun hasIran989Prefix(rawPhone: String): Boolean = hasIranPhonePrefix(rawPhone)
+
+    /**
+     * Inspects parsed columns of a data row to auto-detect which column holds the phone number.
+     * Prevents dropped records when user files have phone as col 0 (phone;username;...) or col 2 (id;username;phone).
+     */
+    fun detectTelegramPhoneCol(cols: List<String>): Int {
+        if (cols.size > 1 && hasIranPhonePrefix(cols[1])) return 1
+        if (cols.isNotEmpty() && hasIranPhonePrefix(cols[0])) return 0
+        if (cols.size > 2 && hasIranPhonePrefix(cols[2])) return 2
+        if (cols.size > 3 && hasIranPhonePrefix(cols[3])) return 3
+        return 1
+    }
 
     /**
      * Ultra-fast zero-allocation pre-filter for raw Telegram CSV lines:
      * Locates [phoneColIndex] directly in [rawLine] without allocating column strings or lists,
-     * and checks whether that column starts with `989`.
-     * Rejects non-989 rows ~15x faster than full CSV splitting on multi-million-row Telegram dumps.
+     * and checks whether that column starts with `(98)`, `(+98)`, `98`, or `989`.
+     * Rejects foreign non-Iran rows ~15x faster than full CSV splitting on multi-million-row Telegram dumps.
      */
     fun rawTelegramLinePasses98Filter(
-        rawLine: String,
-        phoneColIndex: Int = 1,
-        preferredDelimiter: Char = '\u0000'
-    ): Boolean = rawTelegramLinePasses989Filter(rawLine, phoneColIndex, preferredDelimiter)
-
-    fun rawTelegramLinePasses989Filter(
         rawLine: String,
         phoneColIndex: Int = 1,
         preferredDelimiter: Char = '\u0000'
     ): Boolean {
         if (phoneColIndex < 0) return true
         val len = rawLine.length
-        if (len < 4) return false
+        if (len < 2) return false
         val delimiter = if (preferredDelimiter != '\u0000') {
             preferredDelimiter
         } else {
@@ -452,28 +505,54 @@ object CsvSchemaParser {
 
         if (currentCol != phoneColIndex || i >= len) return false
 
-        // Skip leading quotes, '+', '(', ')', whitespace inside the target phone column, stopping if delimiter reached
+        // Skip leading quotes, '+', '(', ')', '-', whitespace inside the target phone column
         while (i < len) {
             val c = rawLine[i]
             if (c == delimiter && !inQuotes) return false
             if (c == '"') {
                 inQuotes = !inQuotes
                 i++
-            } else if (c <= ' ' || c == '+' || c == '(' || c == ')' || c == '\'' || c == '\uFEFF' || c == '\u200E' || c == '\u200F') {
+            } else if (c <= ' ' || c == '+' || c == '(' || c == ')' || c == '-' || c == '\'' ||
+                c == '\uFEFF' || c == '\u200E' || c == '\u200F'
+            ) {
                 i++
             } else {
                 break
             }
         }
 
-        if (i + 2 >= len) return false
+        // Check for 00 or 0 before 98
+        if (i + 3 < len && toAsciiDigitOrChar(rawLine[i]) == '0' && toAsciiDigitOrChar(rawLine[i + 1]) == '0') {
+            i += 2
+        } else if (i + 2 < len && toAsciiDigitOrChar(rawLine[i]) == '0' &&
+            toAsciiDigitOrChar(rawLine[i + 1]) == '9' && toAsciiDigitOrChar(rawLine[i + 2]) == '8'
+        ) {
+            i += 1
+        }
+
+        while (i < len) {
+            val c = rawLine[i]
+            if (c == delimiter && !inQuotes) return false
+            if (c <= ' ' || c == '-' || c == '(' || c == ')' || c == '+') {
+                i++
+            } else {
+                break
+            }
+        }
+
+        if (i + 1 >= len) return false
         val c0 = rawLine[i]
         val c1 = rawLine[i + 1]
-        val c2 = rawLine[i + 2]
-        if ((c0 == delimiter || c1 == delimiter || c2 == delimiter) && !inQuotes) return false
+        if ((c0 == delimiter || c1 == delimiter) && !inQuotes) return false
 
-        return toAsciiDigitOrChar(c0) == '9' && toAsciiDigitOrChar(c1) == '8' && toAsciiDigitOrChar(c2) == '9'
+        return toAsciiDigitOrChar(c0) == '9' && toAsciiDigitOrChar(c1) == '8'
     }
+
+    fun rawTelegramLinePasses989Filter(
+        rawLine: String,
+        phoneColIndex: Int = 1,
+        preferredDelimiter: Char = '\u0000'
+    ): Boolean = rawTelegramLinePasses98Filter(rawLine, phoneColIndex, preferredDelimiter)
 
     private fun toAsciiDigitOrChar(ch: Char): Char = when (ch) {
         in '\u06F0'..'\u06F9' -> ('0'.code + (ch.code - '\u06F0'.code)).toChar()
@@ -552,17 +631,35 @@ object CsvSchemaParser {
     }
 
     private fun parseTelegramPositional(cols: List<String>, index: Int): ParsedCsvIdentityRow {
-        // (0:account_id; 1:phone; 2:username; 3:first_name; 4:last_name)
-        val accountId = cols.colOrDash(0)
-        val phone = cols.colOrDash(1)
-        val rawUsername = cols.getOrNull(2).orEmpty()
+        val phoneColIdx = detectTelegramPhoneCol(cols)
+        val phone = cols.getOrNull(phoneColIdx).orEmpty().ifEmpty { "-" }
+        val accountId = if (phoneColIdx == 1) {
+            cols.colOrDash(0)
+        } else if (phoneColIdx == 0) {
+            cols.getOrNull(1).orEmpty().ifEmpty { "-" }
+        } else {
+            cols.colOrDash(0)
+        }
+        val rawUsername = when (phoneColIdx) {
+            1 -> cols.getOrNull(2).orEmpty()
+            0 -> cols.getOrNull(1).orEmpty()
+            else -> cols.getOrNull(1).orEmpty()
+        }
         val username = when {
             rawUsername.isEmpty() || rawUsername == "-" -> "-"
             rawUsername.startsWith("@") -> rawUsername
             else -> "@$rawUsername"
         }
-        val firstName = cols.getOrNull(3).orEmpty()
-        val lastName = cols.getOrNull(4).orEmpty()
+        val firstName = when (phoneColIdx) {
+            1 -> cols.getOrNull(3).orEmpty()
+            0 -> cols.getOrNull(2).orEmpty()
+            else -> cols.getOrNull(3).orEmpty()
+        }
+        val lastName = when (phoneColIdx) {
+            1 -> cols.getOrNull(4).orEmpty()
+            0 -> cols.getOrNull(3).orEmpty()
+            else -> cols.getOrNull(4).orEmpty()
+        }
         val hasFirst = firstName.isNotEmpty() && firstName != "-"
         val hasLast = lastName.isNotEmpty() && lastName != "-"
         val combinedName = when {
@@ -574,17 +671,18 @@ object CsvSchemaParser {
         }
 
         val detailsSb = StringBuilder(48)
-        if (firstName.isNotEmpty()) {
+        if (firstName.isNotEmpty() && firstName != "-") {
             detailsSb.append("FIRST: ").append(firstName)
         }
-        if (lastName.isNotEmpty()) {
+        if (lastName.isNotEmpty() && lastName != "-") {
             if (detailsSb.isNotEmpty()) detailsSb.append(" • ")
             detailsSb.append("LAST: ").append(lastName)
         }
-        if (cols.size > 5) {
+        val tailStart = if (phoneColIdx == 0) 4 else 5
+        if (cols.size > tailStart) {
             if (detailsSb.isNotEmpty()) detailsSb.append(" • ")
-            for (k in 5 until cols.size) {
-                if (k > 5) detailsSb.append(" | ")
+            for (k in tailStart until cols.size) {
+                if (k > tailStart) detailsSb.append(" | ")
                 detailsSb.append(cols[k])
             }
         }
@@ -602,12 +700,12 @@ object CsvSchemaParser {
 
     /**
      * Module-specific import filter:
-     * In the Telegram section (`telegram`), only import records whose `phone` field starts with `989`
-     * (after normalizing Persian/Arabic digits and stripping any leading `+`, `(`, `)`, or quotes).
+     * In the Telegram section (`telegram`), import records whose `phone` field starts with
+     * `(98)`, `(+98)`, `98`, or `989` (handling quotes, spaces, dashes, leading '+', and Persian/Arabic digits).
      */
     fun passesModuleImportFilter(moduleId: String, row: ParsedCsvIdentityRow): Boolean {
         if (moduleId != "telegram") return true
-        return hasIran989Prefix(row.phone)
+        return hasIranPhonePrefix(row.phone)
     }
 
     private fun parseBankMeliPositional(cols: List<String>, index: Int): ParsedCsvIdentityRow {
@@ -1025,9 +1123,9 @@ class HighSpeedCsvImportEngine(
         }.asCoroutineDispatcher()
 
     companion object {
-        private const val RAW_SCAN_CHUNK_SIZE = 5_000
-        private const val SQL_COMMIT_BATCH_SIZE = 2_500
-        private const val UI_TELEMETRY_MIN_INTERVAL_MS = 110L
+        private const val RAW_SCAN_CHUNK_SIZE = 15_000
+        private const val SQL_COMMIT_BATCH_SIZE = 15_000
+        private const val UI_TELEMETRY_MIN_INTERVAL_MS = 100L
     }
 
     fun pauseImport() {
@@ -1081,7 +1179,15 @@ class HighSpeedCsvImportEngine(
         activeImportJob = externalScope.launch(Dispatchers.IO) {
             val gpuAccelerator = GpuComputeAccelerator()
             val pendingEntities = ArrayList<IdentityEntity>(SQL_COMMIT_BATCH_SIZE * 2)
+            val db = database.openHelper.writableDatabase
             try {
+                // Flash-speed bulk loading SQLite PRAGMAs (eliminates fsync disk bottleneck on 20M rows)
+                try {
+                    db.execSQL("PRAGMA synchronous = OFF")
+                    db.execSQL("PRAGMA temp_store = MEMORY")
+                    db.execSQL("PRAGMA cache_size = -64000") // 64 MB RAM cache
+                } catch (_: Exception) {}
+
                 val (fileName, fileSizeBytes) = resolveFileMeta(uri)
                 withContext(gpuSingleThreadDispatcher) {
                     gpuAccelerator.initializeOnCurrentThread()
@@ -1100,7 +1206,7 @@ class HighSpeedCsvImportEngine(
 
                 val rawStream = context.contentResolver.openInputStream(uri)
                     ?: throw IllegalStateException("Unable to open selected CSV stream.")
-                val bufferedStream = BufferedInputStream(rawStream, 524_288)
+                val bufferedStream = BufferedInputStream(rawStream, 1_048_576) // 1 MB high-throughput stream buffer
                 val detectedCharset = detectCsvCharset(bufferedStream)
                 val decoder = detectedCharset.newDecoder()
                     .onMalformedInput(CodingErrorAction.REPLACE)
@@ -1118,6 +1224,7 @@ class HighSpeedCsvImportEngine(
                 var compiledHeaders: CompiledHeaderMap? = null
                 var fileDelimiter = '\u0000'
                 var checkedFirstNonEmptyLine = false
+                var detectedPhoneCol = 1
                 val chunkBuffer = ArrayList<String>(RAW_SCAN_CHUNK_SIZE)
 
                 BoundedLineReader(InputStreamReader(bufferedStream, decoder), maxLineChars = 8_192).use { reader ->
@@ -1143,19 +1250,25 @@ class HighSpeedCsvImportEngine(
                                 fileDelimiter = CsvSchemaParser.detectDelimiter(trimmed)
                                 if (CsvSchemaParser.looksLikeCsvHeader(trimmed)) {
                                     val headerCols = CsvSchemaParser.splitCsvLineFast(trimmed, fileDelimiter)
-                                    compiledHeaders = CsvSchemaParser.compileHeaders(headerCols)
+                                    val compiled = CsvSchemaParser.compileHeaders(headerCols)
+                                    compiledHeaders = compiled
+                                    detectedPhoneCol = if (compiled.phoneColIndex >= 0) compiled.phoneColIndex else 1
                                 } else {
-                                    // Pre-filter Telegram non-98 rows right at stream ingestion!
-                                    if (moduleId == "telegram" &&
-                                        !CsvSchemaParser.rawTelegramLinePasses98Filter(trimmed, 1, fileDelimiter)
-                                    ) {
-                                        skippedRows.incrementAndGet()
+                                    val cols = CsvSchemaParser.splitCsvLineFast(trimmed, fileDelimiter)
+                                    detectedPhoneCol = CsvSchemaParser.detectTelegramPhoneCol(cols)
+                                    if (moduleId == "telegram") {
+                                        val candidatePhone = cols.getOrNull(detectedPhoneCol).orEmpty()
+                                        if (!CsvSchemaParser.hasIranPhonePrefix(candidatePhone)) {
+                                            skippedRows.incrementAndGet()
+                                        } else {
+                                            chunkBuffer.add(trimmed)
+                                        }
                                     } else {
                                         chunkBuffer.add(trimmed)
                                     }
                                 }
                             } else {
-                                val tgPhoneIdx = compiledHeaders?.phoneColIndex ?: 1
+                                val tgPhoneIdx = detectedPhoneCol
                                 if (moduleId == "telegram" &&
                                     tgPhoneIdx >= 0 &&
                                     !CsvSchemaParser.rawTelegramLinePasses98Filter(trimmed, tgPhoneIdx, fileDelimiter)
@@ -1289,6 +1402,11 @@ class HighSpeedCsvImportEngine(
                     )
                 }
             } finally {
+                try {
+                    db.execSQL("PRAGMA synchronous = NORMAL")
+                    compiledInsertStmt?.close()
+                    compiledInsertStmt = null
+                } catch (_: Exception) {}
                 withContext(gpuSingleThreadDispatcher) {
                     gpuAccelerator.release()
                 }
@@ -1631,20 +1749,84 @@ class HighSpeedCsvImportEngine(
         return sb
     }
 
+    @Volatile
+    private var compiledInsertStmt: SupportSQLiteStatement? = null
+
+    private fun getOrCreateInsertStatement(db: SupportSQLiteDatabase): SupportSQLiteStatement {
+        val existing = compiledInsertStmt
+        if (existing != null) return existing
+        val sql = """
+            INSERT INTO identity_records (
+                moduleId, fullName, nationalCode, phone, accountOrHandle,
+                cardNumber, fatherName, idNumber, birthDate, city,
+                province, birthCity, birthProvince, postalCode, address,
+                email, username, memberCode, branchId, defNumOld,
+                passwordHint, passwValue, rawDetails, gpuSignatureHash, importedAt
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """.trimIndent()
+        val stmt = db.compileStatement(sql)
+        compiledInsertStmt = stmt
+        return stmt
+    }
+
+    private inline fun fastNormalizeField(s: String): String {
+        if (s.isEmpty() || s == "-") return "-"
+        return TextNormalizer.normalizeForSearch(s).ifEmpty { "-" }
+    }
+
     private suspend fun flushPendingEntities(
         pendingEntities: ArrayList<IdentityEntity>,
-        processedRows: AtomicLong
+        processedRows: AtomicLong,
+        maxCount: Int = pendingEntities.size
     ) {
-        var offset = 0
-        val total = pendingEntities.size
-        while (offset < total) {
-            val end = minOf(total, offset + SQL_COMMIT_BATCH_SIZE)
-            val slice = pendingEntities.subList(offset, end)
-            database.identityDao().insertBatch(slice)
-            processedRows.addAndGet((end - offset).toLong())
-            offset = end
+        if (pendingEntities.isEmpty()) return
+        val count = minOf(pendingEntities.size, maxCount)
+        withContext(Dispatchers.IO) {
+            val db = database.openHelper.writableDatabase
+            val stmt = getOrCreateInsertStatement(db)
+            db.beginTransactionNonExclusive()
+            try {
+                for (i in 0 until count) {
+                    val e = pendingEntities[i]
+                    stmt.clearBindings()
+                    stmt.bindString(1, e.moduleId)
+                    stmt.bindString(2, e.fullName)
+                    stmt.bindString(3, e.nationalCode)
+                    stmt.bindString(4, e.phone)
+                    stmt.bindString(5, e.accountOrHandle)
+                    stmt.bindString(6, e.cardNumber)
+                    stmt.bindString(7, e.fatherName)
+                    stmt.bindString(8, e.idNumber)
+                    stmt.bindString(9, e.birthDate)
+                    stmt.bindString(10, e.city)
+                    stmt.bindString(11, e.province)
+                    stmt.bindString(12, e.birthCity)
+                    stmt.bindString(13, e.birthProvince)
+                    stmt.bindString(14, e.postalCode)
+                    stmt.bindString(15, e.address)
+                    stmt.bindString(16, e.email)
+                    stmt.bindString(17, e.username)
+                    stmt.bindString(18, e.memberCode)
+                    stmt.bindString(19, e.branchId)
+                    stmt.bindString(20, e.defNumOld)
+                    stmt.bindString(21, e.passwordHint)
+                    stmt.bindString(22, e.passwValue)
+                    stmt.bindString(23, e.rawDetails)
+                    stmt.bindLong(24, e.gpuSignatureHash)
+                    stmt.bindLong(25, e.importedAt)
+                    stmt.executeInsert()
+                }
+                db.setTransactionSuccessful()
+                processedRows.addAndGet(count.toLong())
+            } finally {
+                db.endTransaction()
+            }
+            if (count >= pendingEntities.size) {
+                pendingEntities.clear()
+            } else {
+                pendingEntities.subList(0, count).clear()
+            }
         }
-        pendingEntities.clear()
     }
 
     private suspend fun processSurvivingChunkParallel(
@@ -1715,35 +1897,38 @@ class HighSpeedCsvImportEngine(
                     } else {
                         1L
                     }
-                    val cleanedPhone = TextNormalizer.normalizeForSearch(row.phone)
-                        .let { if (moduleId == "telegram") it.trimStart('+') else it }
-                        .ifEmpty { "-" }
+                    val cleanedPhone = if (row.phone.isEmpty() || row.phone == "-") {
+                        "-"
+                    } else {
+                        val norm = TextNormalizer.normalizeForSearch(row.phone)
+                        if (moduleId == "telegram") norm.trimStart('+') else norm
+                    }.ifEmpty { "-" }
 
                     pendingEntities.add(
                         IdentityEntity(
                             moduleId = moduleId,
-                            fullName = TextNormalizer.normalizeForSearch(row.fullName).ifEmpty { row.fullName },
-                            nationalCode = TextNormalizer.normalizeForSearch(row.nationalCode).ifEmpty { "-" },
+                            fullName = if (row.fullName.isEmpty() || row.fullName == "-") "Unknown" else TextNormalizer.normalizeForSearch(row.fullName).ifEmpty { row.fullName },
+                            nationalCode = fastNormalizeField(row.nationalCode),
                             phone = cleanedPhone,
-                            accountOrHandle = TextNormalizer.normalizeForSearch(row.accountOrHandle).ifEmpty { "-" },
-                            cardNumber = TextNormalizer.normalizeForSearch(row.cardNumber).ifEmpty { "-" },
-                            fatherName = TextNormalizer.normalizeForSearch(row.fatherName).ifEmpty { "-" },
-                            idNumber = TextNormalizer.normalizeForSearch(row.idNumber).ifEmpty { "-" },
-                            birthDate = TextNormalizer.normalizeForSearch(row.birthDate).ifEmpty { "-" },
-                            city = TextNormalizer.normalizeForSearch(row.city).ifEmpty { "-" },
-                            province = TextNormalizer.normalizeForSearch(row.province).ifEmpty { "-" },
-                            birthCity = TextNormalizer.normalizeForSearch(row.birthCity).ifEmpty { "-" },
-                            birthProvince = TextNormalizer.normalizeForSearch(row.birthProvince).ifEmpty { "-" },
-                            postalCode = TextNormalizer.normalizeForSearch(row.postalCode).ifEmpty { "-" },
-                            address = TextNormalizer.normalizeForSearch(row.address).ifEmpty { "-" },
-                            email = TextNormalizer.normalizeForSearch(row.email).ifEmpty { "-" },
-                            username = TextNormalizer.normalizeForSearch(row.username).ifEmpty { "-" },
-                            memberCode = TextNormalizer.normalizeForSearch(row.memberCode).ifEmpty { "-" },
-                            branchId = TextNormalizer.normalizeForSearch(row.branchId).ifEmpty { "-" },
-                            defNumOld = TextNormalizer.normalizeForSearch(row.defNumOld).ifEmpty { "-" },
-                            passwordHint = TextNormalizer.normalizeForSearch(row.passwordHint).ifEmpty { "-" },
-                            passwValue = TextNormalizer.normalizeForSearch(row.passwValue).ifEmpty { "-" },
-                            rawDetails = TextNormalizer.normalizeForSearch(row.rawDetails),
+                            accountOrHandle = fastNormalizeField(row.accountOrHandle),
+                            cardNumber = fastNormalizeField(row.cardNumber),
+                            fatherName = fastNormalizeField(row.fatherName),
+                            idNumber = fastNormalizeField(row.idNumber),
+                            birthDate = fastNormalizeField(row.birthDate),
+                            city = fastNormalizeField(row.city),
+                            province = fastNormalizeField(row.province),
+                            birthCity = fastNormalizeField(row.birthCity),
+                            birthProvince = fastNormalizeField(row.birthProvince),
+                            postalCode = fastNormalizeField(row.postalCode),
+                            address = fastNormalizeField(row.address),
+                            email = fastNormalizeField(row.email),
+                            username = fastNormalizeField(row.username),
+                            memberCode = fastNormalizeField(row.memberCode),
+                            branchId = fastNormalizeField(row.branchId),
+                            defNumOld = fastNormalizeField(row.defNumOld),
+                            passwordHint = fastNormalizeField(row.passwordHint),
+                            passwValue = fastNormalizeField(row.passwValue),
+                            rawDetails = if (row.rawDetails.isEmpty()) "" else TextNormalizer.normalizeForSearch(row.rawDetails),
                             gpuSignatureHash = sig,
                             importedAt = nowTimestamp
                         )
@@ -1752,19 +1937,13 @@ class HighSpeedCsvImportEngine(
             }
         }
 
-        // Commit full 2,500-record WAL transactions for peak SQLite throughput
+        // Direct compiled SQLiteStatement batching for peak flash-speed throughput
         while (pendingEntities.size >= SQL_COMMIT_BATCH_SIZE) {
-            val commitSlice = ArrayList<IdentityEntity>(SQL_COMMIT_BATCH_SIZE)
-            for (idx in 0 until SQL_COMMIT_BATCH_SIZE) {
-                commitSlice.add(pendingEntities[idx])
-            }
-            pendingEntities.subList(0, SQL_COMMIT_BATCH_SIZE).clear()
-            database.identityDao().insertBatch(commitSlice)
-            processedRows.addAndGet(SQL_COMMIT_BATCH_SIZE.toLong())
+            flushPendingEntities(pendingEntities, processedRows, maxCount = SQL_COMMIT_BATCH_SIZE)
         }
 
         if (forceFlush && pendingEntities.isNotEmpty()) {
-            flushPendingEntities(pendingEntities, processedRows)
+            flushPendingEntities(pendingEntities, processedRows, maxCount = pendingEntities.size)
         }
 
         val nowMs = System.currentTimeMillis()
